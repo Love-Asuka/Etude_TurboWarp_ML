@@ -15,7 +15,11 @@ class core {
         outputDim: null,
         totalLayers: 0,
         created: null
-      }
+      },
+      // 新增：用于自动微分和优化的状态
+      parameters: {},          // 存储模型参数（权重和偏置）
+      gradients: {},           // 存储参数梯度
+      forwardData: {}          // 存储前向传播中间结果
     };
   }
 
@@ -113,7 +117,11 @@ class core {
         outputDim: null,
         totalLayers: 0,
         created: new Date().toISOString()
-      }
+      },
+      // 重置新增状态
+      parameters: {},
+      gradients: {},
+      forwardData: {}
     };
 
     console.log(`[core.js] 模型定义开始，输入维度: ${inputDim}`);
@@ -175,6 +183,12 @@ class core {
       });
     }
 
+    // 初始化该层的梯度存储空间（用于自动微分）
+    this.globalState.gradients[layerId] = {
+      weight: Array(outputDim).fill().map(() => Array(this.globalState.currentInputDim).fill(0)),
+      bias: Array(outputDim).fill(0)
+    };
+
     // 更新状态
     this.globalState.currentInputDim = outputDim;
     this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
@@ -211,7 +225,27 @@ class core {
       }
     }
 
-    console.log('[core.js] 模型定义完成');
+    // 初始化模型参数和清空缓存数据
+    this.globalState.parameters = {};
+    this.globalState.forwardData = {};
+
+    // 为每一层初始化参数（权重和偏置）
+    this.globalState.layers.forEach((layer) => {
+      const inDim = layer.input_dim;
+      const outDim = layer.output_dim;
+      const layerId = layer.id;
+      
+      // 权重：小随机数初始化（He初始化简化版，适用于ReLU）
+      const scale = Math.sqrt(2.0 / inDim);
+      this.globalState.parameters[layerId] = {
+        weight: Array(outDim).fill().map(() => 
+          Array(inDim).fill().map(() => (Math.random() - 0.5) * 2 * scale)
+        ),
+        bias: Array(outDim).fill(0) // 偏置初始化为零
+      };
+    });
+
+    console.log('[core.js] 模型定义完成，参数已初始化');
     console.log('[core.js] 模型结构:', this.globalState);
   }
 
@@ -241,11 +275,11 @@ class core {
         parameters: {
           weight: {
             shape: [layer.output_dim, layer.input_dim],
-            data: []
+            data: this.globalState.parameters[layer.id]?.weight || []
           },
           bias: {
             shape: [layer.output_dim],
-            data: []
+            data: this.globalState.parameters[layer.id]?.bias || []
           }
         }
       })),
@@ -268,7 +302,10 @@ class core {
         outputDim: null,
         totalLayers: 0,
         created: null
-      }
+      },
+      parameters: {},
+      gradients: {},
+      forwardData: {}
     };
     console.log('[core.js] 模型已清除');
   }
