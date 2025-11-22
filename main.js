@@ -21,6 +21,22 @@ class main {
             }
           }
         }
+        ,
+        {
+          opcode: 'Matrix_addition',
+          blockType: Scratch.BlockType.REPORTER,
+          text: 'Matrix [A] + [B]',
+          arguments: {
+            A: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: ''
+            },
+            B: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: ''
+            }
+          }
+        }
       ]
     };
   }
