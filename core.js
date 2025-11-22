@@ -1,4 +1,4 @@
-class main {
+class core {
   getInfo() {
     return {
       id: 'EtudeTurboWarpML',
@@ -9,8 +9,5 @@ class main {
       blocks: []
     };
   }
-  
-
 }
-
-Scratch.extensions.register(new main());
+Scratch.extensions.register(new core());
