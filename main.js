@@ -458,7 +458,6 @@ class EtudeTurboWarpMLOptimizer {
   }
 }
 
-// ==================== 线性代数模块 ====================
 class EtudeTurboWarpMLLinearAlgebra {
   matrix_multiplication(args) {
     try {
@@ -483,7 +482,6 @@ class EtudeTurboWarpMLLinearAlgebra {
   }
 }
 
-// ==================== 主扩展类 ====================
 class EtudeTurboWarpML {
   constructor() {
     this.core = new EtudeTurboWarpMLCore();
@@ -500,7 +498,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xin',
-      version: '1.0.4',
+      version: '0.0.1',
       blocks: [
         // 核心模块积木
         {
