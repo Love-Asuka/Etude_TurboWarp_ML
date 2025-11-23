@@ -27,23 +27,37 @@ const MLUtils = {
         return false;
       }
       return true;
+    },
+    
+    validatePositiveInt(val, name, context = 'ML') {
+      const num = parseInt(val);
+      if (isNaN(num) || num <= 0) {
+        console.error(`[${context}] ${name} 必须是正整数`);
+        return null;
+      }
+      return num;
     }
   },
 
-  // 激活函数注册表（策略模式）
+  mapMatrices(a, b, operation) {
+    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
+    return a.map((row, i) => row.map((val, j) => operation(val, b[i][j])));
+  },
+
+  // 激活函数注册表
   ActivationRegistry: {
     _activations: {
       relu: {
-        forward: x => Math.max(0, x),
-        backward: (x, grad) => (x > 0 ? grad : 0)
+        forward: row => row.map(x => Math.max(0, x)),
+        backward: (row, gradRow) => row.map((x, i) => (x > 0 ? gradRow[i] : 0))
       },
       tanh: {
-        forward: x => Math.tanh(x),
-        backward: (x, grad) => (1 - x * x) * grad
+        forward: row => row.map(x => Math.tanh(x)),
+        backward: (row, gradRow) => row.map((x, i) => (1 - x * x) * gradRow[i])
       },
       sigmoid: {
-        forward: x => 1 / (1 + Math.exp(-x)),
-        backward: (x, grad) => (x * (1 - x)) * grad
+        forward: row => row.map(x => 1 / (1 + Math.exp(-x))),
+        backward: (row, gradRow) => row.map((x, i) => (x * (1 - x)) * gradRow[i])
       },
       softmax: {
         forward: row => {
@@ -57,6 +71,7 @@ const MLUtils = {
           const result = new Array(n).fill(0);
           for (let j = 0; j < n; j++) {
             for (let k = 0; k < n; k++) {
+
               const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
               result[j] += rowGrad[k] * jacobian;
             }
@@ -68,43 +83,27 @@ const MLUtils = {
 
     apply(matrix, type) {
       if (!matrix || !this._activations[type]) return matrix;
-      
-      if (type === 'softmax') {
-        return matrix.map(row => this._activations.softmax.forward(row));
-      }
-      
-      const activation = this._activations[type];
-      return matrix.map(row => row.map(activation.forward));
+      return matrix.map(row => this._activations[type].forward(row));
     },
 
     derivative(activated, type, grad) {
       if (!activated || !grad || !this._activations[type]) return grad;
-      
-      if (type === 'softmax') {
-        return activated.map((row, i) => this._activations.softmax.backward(row, grad[i]));
-      }
-      
-      const activation = this._activations[type];
       return activated.map((row, i) => 
-        row.map((val, j) => activation.backward(val, grad[i][j]))
+        this._activations[type].backward(row, grad[i])
       );
     }
   },
 
-  // 参数初始化策略
   Initializers: {
     he: (inDim, outDim) => {
       const scale = Math.sqrt(2.0 / inDim);
       return () => (Math.random() - 0.5) * 2 * scale;
     },
-    
     xavier: (inDim, outDim) => {
       const limit = Math.sqrt(6 / (inDim + outDim));
       return () => (Math.random() - 0.5) * 2 * limit;
     },
-    
     zeros: () => () => 0,
-    
     ones: () => () => 1
   },
 
@@ -119,9 +118,10 @@ const MLUtils = {
       console.error(`[ML] 矩阵乘法维度不匹配: A[0].length=${a[0].length} ≠ B.length=${b.length}`);
       return [];
     }
+    const bT = this.transpose(b); 
     return a.map(row => 
-      b[0].map((_, j) => 
-        row.reduce((sum, val, k) => sum + val * b[k][j], 0)
+      bT.map(col => 
+        row.reduce((sum, val, k) => sum + val * col[k], 0)
       )
     );
   },
@@ -134,13 +134,11 @@ const MLUtils = {
   },
 
   matAdd(a, b) {
-    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
-    return a.map((row, i) => row.map((val, j) => val + b[i][j]));
+    return this.mapMatrices(a, b, (x, y) => x + y);
   },
 
   hadamard(a, b) {
-    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
-    return a.map((row, i) => row.map((val, j) => val * b[i][j]));
+    return this.mapMatrices(a, b, (x, y) => x * y);
   },
 
   computeLossAndGradient(pred, target, lossType) {
@@ -152,16 +150,19 @@ const MLUtils = {
     const batchSize = pred.length;
     
     switch(lossType) {
-      case 'mse':
+      case 'mse': {
+        let totalLoss = 0;
         const mseGrad = pred.map((row, i) => 
-          row.map((val, j) => 2 * (val - target[i][j]) / batchSize)
+          row.map((val, j) => {
+            const diff = val - target[i][j];
+            totalLoss += diff * diff;
+            return 2 * diff / batchSize;
+          })
         );
-        const mseLoss = pred.reduce((sum, row, i) => 
-          sum + row.reduce((rowSum, val, j) => rowSum + Math.pow(val - target[i][j], 2), 0), 0
-        ) / batchSize;
-        return { loss: mseLoss, grad: mseGrad };
+        return { loss: totalLoss / batchSize, grad: mseGrad };
+      }
 
-      case 'crossentropy':
+      case 'crossentropy': {
         const epsilon = 1e-7;
         const ceLoss = -pred.reduce((sum, row, i) => 
           sum + row.reduce((rowSum, val, j) => rowSum + target[i][j] * Math.log(val + epsilon), 0), 0
@@ -171,6 +172,7 @@ const MLUtils = {
           row.map((val, j) => val - target[i][j])
         );
         return { loss: ceLoss, grad: ceGrad };
+      }
 
       default:
         console.error(`[ML] 不支持的损失函数: ${lossType}`);
@@ -181,7 +183,6 @@ const MLUtils = {
 
 class EtudeTurboWarpMLCore {
   constructor() {
-    // _pendingLayers 用于存储 addLinearLayer 的配置，直到调用 endModelDefinition
     this._pendingLayers = [];
     this.globalState = this._createFreshState();
   }
@@ -211,57 +212,40 @@ class EtudeTurboWarpMLCore {
     };
   }
 
-  // 移除 startModelDefinition，改用 clearModel 逻辑或直接在 addLinearLayer 时重置 pending
-  // 这里选择 addLinearLayer 只是添加配置，不涉及具体维度计算
-
   addLinearLayer(args) {
-    const outputDim = parseInt(args.OUTPUT_DIM);
-    const activation = args.ACTIVATION;
-    
-    if (isNaN(outputDim) || outputDim <= 0) {
-      console.error('[core] 输出维度必须是正整数');
-      return;
-    }
+    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM, '输出维度', 'core');
+    if (!outputDim) return;
 
-    // 暂存层配置
     this._pendingLayers.push({
       type: 'linear',
       output_dim: outputDim,
-      activation: activation
+      activation: args.ACTIVATION
     });
 
-    console.log(`[core] 层配置已添加 (待编译): Out=${outputDim}, Act=${activation}`);
+    console.log(`[core] 层配置已添加: Out=${outputDim}, Act=${args.ACTIVATION}`);
   }
 
   endModelDefinition(args) {
-    // 这里接收 INPUT_DIM
-    const inputDim = parseInt(args.INPUT_DIM);
+    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM, '输入维度', 'core');
     const initStrategy = args.INIT || 'he';
 
-    if (isNaN(inputDim) || inputDim <= 0) {
-      console.error('[core] 模型输入维度必须是正整数');
-      return;
-    }
-
+    if (!inputDim) return;
     if (this._pendingLayers.length === 0) {
       console.error('[core] 模型为空，请先添加层');
       return;
     }
 
-    // 重置并开始构建真正的模型状态
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
     
     let currentInputDim = inputDim;
 
-    // 遍历待处理的层配置，构建计算图和参数
     this._pendingLayers.forEach((layerConfig, index) => {
       const layerId = `layer_${index}_linear`;
       const inputName = index === 0 ? 'tensor_0' : `tensor_${index}`;
       const linearOutputName = `linear_${index + 1}`;
       const activationOutputName = `tensor_${index + 1}`;
 
-      // 补全层配置信息
       const fullLayerConfig = {
         id: layerId,
         type: 'linear',
@@ -274,7 +258,6 @@ class EtudeTurboWarpMLCore {
 
       this.globalState.layers.push(fullLayerConfig);
 
-      // 构建计算图节点
       this.globalState.computationGraph.forward.push({
         id: `op_${index + 1}`,
         type: 'linear',
@@ -293,29 +276,25 @@ class EtudeTurboWarpMLCore {
         });
       }
 
-      // 初始化参数
-      const generator = MLUtils.Initializers[initStrategy](currentInputDim, layerConfig.output_dim);
+      const generator = MLUtils.Initializers[initStrategy] 
+        ? MLUtils.Initializers[initStrategy](currentInputDim, layerConfig.output_dim)
+        : MLUtils.Initializers.he(currentInputDim, layerConfig.output_dim);
+
       this.globalState.parameters[layerId] = {
         weight: Array(layerConfig.output_dim).fill().map(() => Array(currentInputDim).fill().map(generator)),
         bias: Array(layerConfig.output_dim).fill(0)
       };
 
-      // 初始化梯度结构
       this.globalState.gradients[layerId] = this._generateGradientStructure(fullLayerConfig);
-
-      // 更新下一层的输入维度
       currentInputDim = layerConfig.output_dim;
     });
 
-    // 完成构建
     this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
     this.globalState.modelMeta.outputDim = currentInputDim;
     this.globalState.isModelDefined = true;
-    
-    // 清空待处理列表
     this._pendingLayers = [];
 
-    console.log(`[core] 模型构建完成。输入: ${inputDim}, 输出: ${currentInputDim}, 层数: ${this.globalState.layers.length}`);
+    console.log(`[core] 模型构建完成。In: ${inputDim}, Out: ${currentInputDim}, Init: ${initStrategy}`);
   }
 
   forward(args) {
@@ -352,10 +331,7 @@ class EtudeTurboWarpMLCore {
     const layerId = node.layerId;
     const layerParams = this.globalState.parameters[layerId];
     
-    if (!layerParams) {
-      console.error(`[core] 未找到层 ${layerId} 的参数`);
-      return input;
-    }
+    if (!layerParams) return input;
 
     const weightT = MLUtils.transpose(layerParams.weight);
     const output = MLUtils.matMul(input, weightT);
@@ -367,18 +343,13 @@ class EtudeTurboWarpMLCore {
     if (!this.globalState.isModelDefined) {
       return JSON.stringify({ error: '模型尚未定义' }, null, 2);
     }
-
     return JSON.stringify({
       format: 'etude-ml-model',
       version: '1.0',
       meta: this.globalState.modelMeta,
-
       layers: this.globalState.layers.map(layer => ({
         config: layer,
-        parameters: {
-          weight: this.globalState.parameters[layer.id]?.weight || [],
-          bias: this.globalState.parameters[layer.id]?.bias || []
-        }
+        parameters: this.globalState.parameters[layer.id] || {}
       })),
       computation_graph: this.globalState.computationGraph
     });
@@ -386,45 +357,33 @@ class EtudeTurboWarpMLCore {
 
   loadModel(args) {
     try {
-      const jsonStr = args.JSON;
-      const modelData = JSON.parse(jsonStr);
-
+      const modelData = JSON.parse(args.JSON);
       if (modelData.format !== 'etude-ml-model') {
         console.error('[core] 无效的模型格式');
         return;
       }
 
       const newState = this._createFreshState();
-
       newState.modelMeta = modelData.meta;
       newState.computationGraph = modelData.computation_graph;
       newState.isModelDefined = true;
-      // pendingLayers should be cleared if loading a pre-built model
       this._pendingLayers = []; 
 
       if (Array.isArray(modelData.layers)) {
         modelData.layers.forEach(layerData => {
           const config = layerData.config;
           const params = layerData.parameters;
-
           newState.layers.push(config);
-
-          if (params && params.weight && params.bias) {
-            newState.parameters[config.id] = {
-              weight: params.weight,
-              bias: params.bias
-            };
-          } else {
-             console.warn(`[core] 层 ${config.id} 缺少参数数据`);
+          
+          if (params?.weight && params?.bias) {
+            newState.parameters[config.id] = { weight: params.weight, bias: params.bias };
           }
-
           newState.gradients[config.id] = this._generateGradientStructure(config);
         });
       }
 
       this.globalState = newState;
-      console.log(`[core] 模型已加载: ${newState.modelMeta.name}, 层数: ${newState.modelMeta.totalLayers}`);
-
+      console.log(`[core] 模型已加载: ${newState.modelMeta.name}`);
     } catch (e) {
       console.error(`[core] 模型加载失败: ${e.message}`);
     }
@@ -432,8 +391,7 @@ class EtudeTurboWarpMLCore {
 
   clearModel() {
     this.globalState = this._createFreshState();
-    this._pendingLayers = []; // 同时也清除待构建的层
-    console.log('[core] 模型及待构建层已清除');
+    this._pendingLayers = [];
   }
 
   isModelDefined() {
@@ -448,7 +406,7 @@ class EtudeTurboWarpMLAutograd {
 
   backward(args) {
     if (!MLUtils.Validation.ensureModel(this.core.globalState, 'autograd')) return;
-
+    
     const outputGrad = MLUtils.Validation.parseMatrix(args.GRAD, 'autograd');
     if (!outputGrad) return;
 
@@ -461,13 +419,7 @@ class EtudeTurboWarpMLAutograd {
         return;
     }
 
-    const firstNode = tape[0];
-    if (!firstNode) {
-      console.error('[autograd] 计算图为空');
-      return;
-    }
-    
-    gradBuffer[firstNode.outputs[0]] = outputGrad;
+    gradBuffer[tape[0].outputs[0]] = outputGrad;
 
     for (const node of tape) {
       if (node.type === 'linear') {
@@ -476,50 +428,38 @@ class EtudeTurboWarpMLAutograd {
         this._activationBackward(node, gradBuffer);
       }
     }
-    
-    console.log('[autograd] 反向传播完成');
   }
 
   _linearBackward(node, gradBuffer) {
     const inputName = node.inputs[0];
     const outputName = node.outputs[0];
     const outputGrad = gradBuffer[outputName];
-    
     if (!outputGrad) return;
 
     const layerId = node.layerId;
-    const layer = this.core.globalState.layers.find(l => l.id === layerId);
     const inputData = this.core.globalState.forwardData?.[inputName]?.postActivation;
     const weight = this.core.globalState.parameters[layerId]?.weight;
     
-    if (!layer || !inputData || !weight) {
-      console.error(`[autograd] 缺少线性层 ${layerId} 所需数据`);
-      return;
-    }
+    if (!inputData || !weight) return;
+
 
     const weightGrad = MLUtils.matMul(MLUtils.transpose(outputGrad), inputData);
+
     const biasGrad = MLUtils.sumRows(outputGrad);
+
     const inputGrad = MLUtils.matMul(outputGrad, MLUtils.transpose(weight));
 
     gradBuffer[inputName] = inputGrad;
-    this.core.globalState.gradients[layerId] = { 
-      weight: weightGrad, 
-      bias: biasGrad 
-    };
+    this.core.globalState.gradients[layerId] = { weight: weightGrad, bias: biasGrad };
   }
 
   _activationBackward(node, gradBuffer) {
-    const inputName = node.inputs[0];
     const outputName = node.outputs[0];
     const outputGrad = gradBuffer[outputName];
-    
     if (!outputGrad) return;
 
     const activationData = this.core.globalState.forwardData?.[outputName];
-    if (!activationData) {
-      console.error(`[autograd] 未找到激活层数据 ${outputName}`);
-      return;
-    }
+    if (!activationData) return;
 
     const inputGrad = MLUtils.ActivationRegistry.derivative(
       activationData.postActivation, 
@@ -527,14 +467,13 @@ class EtudeTurboWarpMLAutograd {
       outputGrad
     );
     
-    gradBuffer[inputName] = inputGrad;
+    gradBuffer[node.inputs[0]] = inputGrad;
   }
 
   zeroGrad() {
     this.core.globalState.layers.forEach(layer => {
       this.core.globalState.gradients[layer.id] = this.core._generateGradientStructure(layer);
     });
-    console.log('[autograd] 梯度已清零');
   }
 }
 
@@ -557,7 +496,7 @@ class EtudeTurboWarpMLOptimizer {
     this.autograd.zeroGrad();
 
     const { loss, grad } = MLUtils.computeLossAndGradient(pred, target, lossType);
-    console.log(`[optimizer] 损失值 (${lossType}): ${loss.toFixed(6)}`);
+    console.log(`[optimizer] Loss (${lossType}): ${loss.toFixed(6)}`);
 
     this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
@@ -567,37 +506,35 @@ class EtudeTurboWarpMLOptimizer {
       const layerGrad = this.core.globalState.gradients[layerId];
       const layerParams = this.core.globalState.parameters[layerId];
       
-      if (!layerGrad || !layerParams) {
-        return;
-      }
+      if (!layerGrad || !layerParams) return;
 
-      layerParams.weight = layerParams.weight.map((row, i) =>
-        row.map((val, j) => val - learningRate * layerGrad.weight[i][j])
+      layerParams.weight = MLUtils.mapMatrices(
+        layerParams.weight,
+        layerGrad.weight,
+        (w, g) => w - learningRate * g
       );
       
-      layerParams.bias = layerParams.bias.map((val, i) =>
-        val - learningRate * layerGrad.bias[i]
-      );
+      layerParams.bias = layerParams.bias.map((b, i) => b - learningRate * layerGrad.bias[i]);
       
       updateCount++;
     });
 
-    console.log(`[optimizer] SGD完成，更新 ${updateCount} 层`);
+    console.log(`[optimizer] SGD更新完成，层数: ${updateCount}`);
   }
 }
 
 class EtudeTurboWarpMLLinearAlgebra {
   matrixMultiplication(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A, 'matrixMul');
-    const b = MLUtils.Validation.parseMatrix(args.B, 'matrixMul');
+    const a = MLUtils.Validation.parseMatrix(args.A, 'matMul');
+    const b = MLUtils.Validation.parseMatrix(args.B, 'matMul');
     if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matMul(a, b));
   }
   
   matrixAddition(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A, 'matrixAdd');
-    const b = MLUtils.Validation.parseMatrix(args.B, 'matrixAdd');
-    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return '[]';
+    const a = MLUtils.Validation.parseMatrix(args.A, 'matAdd');
+    const b = MLUtils.Validation.parseMatrix(args.B, 'matAdd');
+    if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matAdd(a, b));
   }
 }
@@ -619,7 +556,7 @@ class EtudeTurboWarpML {
       linearAlgebra: this.linearAlgebra
     };
 
-    Object.entries(modules).forEach(([moduleName, module]) => {
+    Object.entries(modules).forEach(([_, module]) => {
       const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(module))
         .filter(name => name !== 'constructor' && typeof module[name] === 'function' && !name.startsWith('_'));
       
@@ -639,7 +576,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.2',
+      version: '0.0.3',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
         {
@@ -655,9 +592,10 @@ class EtudeTurboWarpML {
         {
           opcode: 'endModelDefinition',
           blockType: Scratch.BlockType.COMMAND,
-          text: '构建并初始化模型 输入维度 [INPUT_DIM]',
+          text: '构建并初始化模型 输入维度 [INPUT_DIM] 策略 [INIT]',
           arguments: {
-            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 }
+            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 },
+            INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' }
           },
           disableMonitor: true
         },
@@ -746,6 +684,15 @@ class EtudeTurboWarpML {
           items: [
             { text: '均方误差(MSE)', value: 'mse' },
             { text: '交叉熵', value: 'crossentropy' }
+          ]
+        },
+        INIT_MENU: {
+          acceptReporters: false,
+          items: [
+            { text: 'He (ReLU推荐)', value: 'he' },
+            { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' },
+            { text: '全零', value: 'zeros' },
+            { text: '全一', value: 'ones' }
           ]
         }
       }
