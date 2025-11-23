@@ -597,7 +597,7 @@ class EtudeTurboWarpML {
       color1: '#4C97FF',
       color2: '#3d85c6',
       color3: '#2e5d8f',
-      author: 'Asuka | Lin Xin',
+      author: 'Asuka | Lin Xi',
       version: '0.0.1',
       blocks: [
         {

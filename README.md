@@ -121,7 +121,7 @@ SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]
 
 ## 作者
 
-Asuka | Lin Xin
+Asuka | Lin Xi
 
 ## 版本
 
