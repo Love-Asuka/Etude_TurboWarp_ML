@@ -17,8 +17,6 @@ const MLUtils = {
     );
   },
 
-
-  
   sumRows(matrix) {
     if (!matrix || !matrix[0]) return [];
     return matrix[0].map((_, col) => 
