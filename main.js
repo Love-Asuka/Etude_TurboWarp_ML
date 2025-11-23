@@ -1,11 +1,9 @@
 const MLUtils = {
-  // 矩阵转置
   transpose(matrix) {
     if (!matrix || !matrix[0]) return [];
     return matrix[0].map((_, col) => matrix.map(row => row[col]));
   },
 
-  // 矩阵乘法
   matMul(a, b) {
     if (!a || !b || a.length === 0 || b.length === 0) return [];
     if (a[0].length !== b.length) {
@@ -19,7 +17,6 @@ const MLUtils = {
     );
   },
 
-  // 行求和
   sumRows(matrix) {
     if (!matrix || !matrix[0]) return [];
     return matrix[0].map((_, col) => 
@@ -33,7 +30,6 @@ const MLUtils = {
     return a.map((row, i) => row.map((val, j) => val * b[i][j]));
   },
 
-  // 激活函数前向传播
   applyActivation(matrix, type) {
     if (!matrix) return [];
     switch(type) {
@@ -55,7 +51,6 @@ const MLUtils = {
     }
   },
 
-  // 激活函数反向传播
   activationDerivative(inputData, activation_type, outputGrad) {
     if (!inputData || !outputGrad) return [];
     let inputGrad;
@@ -79,7 +74,6 @@ const MLUtils = {
   }
 };
 
-// ==================== 核心模块 ====================
 class EtudeTurboWarpMLCore {
   constructor() {
     this.globalState = {
@@ -334,8 +328,6 @@ class EtudeTurboWarpMLCore {
     return this.globalState.isModelDefined;
   }
 }
-
-// ==================== 自动微分模块 ====================
 class EtudeTurboWarpMLAutograd {
   constructor(coreInstance) {
     this.core = coreInstance;
@@ -428,7 +420,6 @@ class EtudeTurboWarpMLAutograd {
   }
 }
 
-// ==================== 优化器模块 ====================
 class EtudeTurboWarpMLOptimizer {
   constructor(coreInstance) {
     this.core = coreInstance;
