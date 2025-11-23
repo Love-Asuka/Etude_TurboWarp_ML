@@ -1,14 +1,123 @@
 const MLUtils = {
+  // 统一验证工具
+  Validation: {
+    parseMatrix(str, context = 'ML') {
+      try {
+        const parsed = JSON.parse(str);
+        if (!Array.isArray(parsed) || !parsed[0] || !Array.isArray(parsed[0])) {
+          throw new Error('无效的矩阵格式，应为二维数组');
+        }
+        return parsed;
+      } catch (e) {
+        console.error(`[${context}] 解析失败: ${e.message}`);
+        return null;
+      }
+    },
+
+    ensureModel(state, context) {
+      if (!state.isModelDefined) {
+        console.error(`[${context}] 模型未定义`);
+        return false;
+      }
+      return true;
+    },
+
+    matchDims(actual, expected, context) {
+      if (actual !== expected) {
+        console.error(`[${context}] 维度不匹配: 期望 ${expected}, 得到 ${actual}`);
+        return false;
+      }
+      return true;
+    }
+  },
+
+  // 激活函数注册表（策略模式）
+  ActivationRegistry: {
+    _activations: {
+      relu: {
+        forward: x => Math.max(0, x),
+        backward: (x, grad) => (x > 0 ? grad : 0)
+      },
+      tanh: {
+        forward: x => Math.tanh(x),
+        backward: (x, grad) => (1 - x * x) * grad
+      },
+      sigmoid: {
+        forward: x => 1 / (1 + Math.exp(-x)),
+        backward: (x, grad) => (x * (1 - x)) * grad
+      },
+      softmax: {
+        forward: row => {
+          const maxVal = Math.max(...row);
+          const exps = row.map(val => Math.exp(val - maxVal));
+          const sumExps = exps.reduce((a, b) => a + b, 0);
+          return exps.map(exp => exp / sumExps);
+        },
+        backward: (row, rowGrad) => {
+          const n = row.length;
+          const result = new Array(n).fill(0);
+          for (let j = 0; j < n; j++) {
+            for (let k = 0; k < n; k++) {
+              const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
+              result[j] += rowGrad[k] * jacobian;
+            }
+          }
+          return result;
+        }
+      }
+    },
+
+    apply(matrix, type) {
+      if (!matrix || !this._activations[type]) return matrix;
+      
+      if (type === 'softmax') {
+        return matrix.map(row => this._activations.softmax.forward(row));
+      }
+      
+      const activation = this._activations[type];
+      return matrix.map(row => row.map(activation.forward));
+    },
+
+    derivative(activated, type, grad) {
+      if (!activated || !grad || !this._activations[type]) return grad;
+      
+      if (type === 'softmax') {
+        return activated.map((row, i) => this._activations.softmax.backward(row, grad[i]));
+      }
+      
+      const activation = this._activations[type];
+      return activated.map((row, i) => 
+        row.map((val, j) => activation.backward(val, grad[i][j]))
+      );
+    }
+  },
+
+  // 参数初始化策略
+  Initializers: {
+    he: (inDim, outDim) => {
+      const scale = Math.sqrt(2.0 / inDim);
+      return () => (Math.random() - 0.5) * 2 * scale;
+    },
+    
+    xavier: (inDim, outDim) => {
+      const limit = Math.sqrt(6 / (inDim + outDim));
+      return () => (Math.random() - 0.5) * 2 * limit;
+    },
+    
+    zeros: () => () => 0,
+    
+    ones: () => () => 1
+  },
+
   transpose(matrix) {
     if (!matrix || !Array.isArray(matrix) || matrix.length === 0 || !Array.isArray(matrix[0])) return [];
     return matrix[0].map((_, col) => matrix.map(row => row[col]));
   },
 
   matMul(a, b) {
-    if (!a || !b || a.length === 0 || b.length === 0 || !a[0] || !b[0] || a[0].length !== b.length) {
-      if (a && b && a[0] && b[0] && a[0].length !== b.length) {
-        console.error(`[ML] 矩阵乘法维度不匹配: A[0].length=${a[0].length} ≠ B.length=${b.length}`);
-      }
+    if (!a || !b || a.length === 0 || b.length === 0 || !a[0] || !b[0]) return [];
+    if (a[0].length !== b.length) {
+      console.error(`[ML] 矩阵乘法维度不匹配: A[0].length=${a[0].length} ≠ B.length=${b.length}`);
       return [];
     }
     return a.map(row => 
@@ -31,60 +140,11 @@ const MLUtils = {
   },
 
   applyActivation(matrix, type) {
-    if (!matrix) return [];
-    switch(type) {
-      case 'relu':
-        return matrix.map(row => row.map(val => Math.max(0, val)));
-      case 'tanh':
-        return matrix.map(row => row.map(val => Math.tanh(val)));
-      case 'sigmoid':
-        return matrix.map(row => row.map(val => 1 / (1 + Math.exp(-val))));
-      case 'softmax':
-        return matrix.map(row => {
-          const maxVal = Math.max(...row);
-          const exps = row.map(val => Math.exp(val - maxVal));
-          const sumExps = exps.reduce((a, b) => a + b, 0);
-          return exps.map(exp => exp / sumExps);
-        });
-      default:
-        return matrix;
-    }
+    return this.ActivationRegistry.apply(matrix, type);
   },
 
   activationDerivative(postActivation, activation_type, outputGrad) {
-    if (!postActivation || !outputGrad) return [];
-    
-    switch(activation_type) {
-      case 'relu':
-        const reluGrad = postActivation.map(row => row.map(val => val > 0 ? 1 : 0));
-        return MLUtils.hadamard(reluGrad, outputGrad);
-      
-      case 'tanh':
-        const tanhGrad = postActivation.map(row => row.map(val => 1 - val * val));
-        return MLUtils.hadamard(tanhGrad, outputGrad);
-      
-      case 'sigmoid':
-        const sigGrad = postActivation.map(row => row.map(val => val * (1 - val)));
-        return MLUtils.hadamard(sigGrad, outputGrad);
-      
-      case 'softmax':
-        return postActivation.map((row, i) => {
-          const rowGrad = outputGrad[i];
-          const n = row.length;
-          const result = new Array(n).fill(0);
-          
-          for (let j = 0; j < n; j++) {
-            for (let k = 0; k < n; k++) {
-              const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
-              result[j] += rowGrad[k] * jacobian;
-            }
-          }
-          return result;
-        });
-      
-      default:
-        return outputGrad.map(row => [...row]);
-    }
+    return this.ActivationRegistry.derivative(postActivation, activation_type, outputGrad);
   },
 
   computeLossAndGradient(pred, target, lossType) {
@@ -93,9 +153,10 @@ const MLUtils = {
       return { loss: 0, grad: [] };
     }
 
+    const batchSize = pred.length;
+    
     switch(lossType) {
       case 'mse':
-        const batchSize = pred.length;
         const mseGrad = pred.map((row, i) => 
           row.map((val, j) => 2 * (val - target[i][j]) / batchSize)
         );
@@ -108,7 +169,7 @@ const MLUtils = {
         const epsilon = 1e-7;
         const ceLoss = -pred.reduce((sum, row, i) => 
           sum + row.reduce((rowSum, val, j) => rowSum + target[i][j] * Math.log(val + epsilon), 0), 0
-        ) / pred.length;
+        ) / batchSize;
 
         const ceGrad = pred.map((row, i) => 
           row.map((val, j) => val - target[i][j])
@@ -143,6 +204,13 @@ class EtudeTurboWarpMLCore {
       parameters: {},
       gradients: {},
       forwardData: {} 
+    };
+  }
+
+  _generateGradientStructure(layer) {
+    return {
+      weight: Array(layer.output_dim).fill().map(() => Array(layer.input_dim).fill(0)),
+      bias: Array(layer.output_dim).fill(0)
     };
   }
 
@@ -190,13 +258,12 @@ class EtudeTurboWarpMLCore {
     };
 
     this.globalState.layers.push(layerConfig);
-
     this.globalState.computationGraph.forward.push({
       id: `op_${layerIndex + 1}`,
       type: 'linear',
       inputs: [inputName],
       outputs: [linearOutputName],
-      params: [`${layerId}.weight`, `${layerId}.bias`]
+      layerId: layerId
     });
 
     if (activation !== 'none') {
@@ -209,11 +276,7 @@ class EtudeTurboWarpMLCore {
       });
     }
 
-    this.globalState.gradients[layerId] = {
-      weight: Array(outputDim).fill().map(() => Array(this.globalState.currentInputDim).fill(0)),
-      bias: Array(outputDim).fill(0)
-    };
-
+    this.globalState.gradients[layerId] = this._generateGradientStructure(layerConfig);
     this.globalState.currentInputDim = outputDim;
     this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
     this.globalState.modelMeta.outputDim = outputDim;
@@ -221,25 +284,21 @@ class EtudeTurboWarpMLCore {
     console.log(`[core] 添加层 ${layerIndex}: ${layerId} (${inputName} -> ${activationOutputName})`);
   }
 
-  endModelDefinition() {
+  endModelDefinition(args = {}) {
     if (this.globalState.layers.length === 0) {
       console.error('[core] 模型中至少需要一个层');
       return;
     }
 
     this.globalState.isModelDefined = true;
+    const initStrategy = args.INIT || 'he';
 
-    // He初始化
     this.globalState.layers.forEach((layer) => {
-      const inDim = layer.input_dim;
-      const outDim = layer.output_dim;
-      const layerId = layer.id;
-      const scale = Math.sqrt(2.0 / inDim);
+      const {input_dim: inDim, output_dim: outDim, id} = layer;
+      const generator = MLUtils.Initializers[initStrategy](inDim, outDim);
       
-      this.globalState.parameters[layerId] = {
-        weight: Array(outDim).fill().map(() => 
-          Array(inDim).fill().map(() => (Math.random() - 0.5) * 2 * scale)
-        ),
+      this.globalState.parameters[id] = {
+        weight: Array(outDim).fill().map(() => Array(inDim).fill().map(generator)),
         bias: Array(outDim).fill(0)
       };
     });
@@ -248,52 +307,29 @@ class EtudeTurboWarpMLCore {
   }
 
   forward(args) {
-    if (!this.globalState.isModelDefined) {
-      console.error('[core] 模型未定义，无法执行推理');
-      return '[]';
-    }
-
-    let input;
-    try {
-      input = JSON.parse(args.INPUT);
-    } catch(e) {
-      console.error('[core] 输入格式无效，需为JSON数组');
-      return '[]';
-    }
-
-    if (!Array.isArray(input) || !Array.isArray(input[0])) {
-      console.error('[core] 输入必须是二维数组 [batch, features]');
-      return '[]';
-    }
+    if (!MLUtils.Validation.ensureModel(this.globalState, 'core')) return '[]';
+    
+    const input = MLUtils.Validation.parseMatrix(args.INPUT, 'core');
+    if (!input) return '[]';
 
     const expectedDim = this.globalState.modelMeta.inputDim;
-    if (input[0].length !== expectedDim) {
-      console.error(`[core] 输入特征维度不匹配: 期望 ${expectedDim}, 得到 ${input[0].length}`);
-      return '[]';
-    }
+    if (!MLUtils.Validation.matchDims(input[0].length, expectedDim, 'core')) return '[]';
 
     this.globalState.forwardData = {};
-    this.globalState.forwardData['tensor_0'] = {
-      preActivation: null, 
-      postActivation: input 
-    };
+    this.globalState.forwardData['tensor_0'] = { preActivation: null, postActivation: input };
+    
     let currentTensor = input;
-    let currentPreActivation = null;
 
     for (const node of this.globalState.computationGraph.forward) {
       if (node.type === 'linear') {
         currentTensor = this._linearForward(node, currentTensor);
-        currentPreActivation = currentTensor; // 线性层输出是"激活前"
       } else if (node.type === 'activation') {
-        const activatedTensor = MLUtils.applyActivation(currentTensor, node.activation_type);
-
+        const activated = MLUtils.ActivationRegistry.apply(currentTensor, node.activation_type);
         this.globalState.forwardData[node.outputs[0]] = {
           preActivation: currentTensor,
-          postActivation: activatedTensor
+          postActivation: activated
         };
-        
-        currentTensor = activatedTensor;
-        currentPreActivation = null; // 重置
+        currentTensor = activated;
       }
     }
 
@@ -301,7 +337,7 @@ class EtudeTurboWarpMLCore {
   }
 
   _linearForward(node, input) {
-    const layerId = node.params[0].split('.')[0];
+    const layerId = node.layerId;
     const layerParams = this.globalState.parameters[layerId];
     
     if (!layerParams) {
@@ -357,18 +393,10 @@ class EtudeTurboWarpMLAutograd {
   }
 
   backward(args) {
-    if (!this.core.globalState.isModelDefined) {
-      console.error('[autograd] 模型未定义');
-      return;
-    }
+    if (!MLUtils.Validation.ensureModel(this.core.globalState, 'autograd')) return;
 
-    let outputGrad;
-    try {
-      outputGrad = JSON.parse(args.GRAD);
-    } catch(e) {
-      console.error('[autograd] 梯度格式错误，需为JSON数组');
-      return;
-    }
+    const outputGrad = MLUtils.Validation.parseMatrix(args.GRAD, 'autograd');
+    if (!outputGrad) return;
 
     const tape = [...this.core.globalState.computationGraph.forward].reverse();
     const gradBuffer = {};
@@ -402,7 +430,7 @@ class EtudeTurboWarpMLAutograd {
       return;
     }
 
-    const layerId = node.params[0].split('.')[0];
+    const layerId = node.layerId;
     const layer = this.core.globalState.layers.find(l => l.id === layerId);
     const inputData = this.core.globalState.forwardData?.[inputName]?.postActivation;
     const weight = this.core.globalState.parameters[layerId]?.weight;
@@ -439,7 +467,7 @@ class EtudeTurboWarpMLAutograd {
       return;
     }
 
-    const inputGrad = MLUtils.activationDerivative(
+    const inputGrad = MLUtils.ActivationRegistry.derivative(
       activationData.postActivation, 
       node.activation_type, 
       outputGrad
@@ -450,11 +478,7 @@ class EtudeTurboWarpMLAutograd {
 
   zeroGrad() {
     this.core.globalState.layers.forEach(layer => {
-      const { id, input_dim: inDim, output_dim: outDim } = layer;
-      this.core.globalState.gradients[id] = {
-        weight: Array(outDim).fill().map(() => Array(inDim).fill(0)),
-        bias: Array(outDim).fill(0)
-      };
+      this.core.globalState.gradients[layer.id] = this.core._generateGradientStructure(layer);
     });
     console.log('[autograd] 梯度已清零');
   }
@@ -466,19 +490,11 @@ class EtudeTurboWarpMLOptimizer {
   }
 
   stepSGD(args) {
-    if (!this.core.globalState.isModelDefined) {
-      console.error('[optimizer] 模型未定义');
-      return;
-    }
+    if (!MLUtils.Validation.ensureModel(this.core.globalState, 'optimizer')) return;
 
-    let pred, target;
-    try {
-      pred = JSON.parse(args.PRED);
-      target = JSON.parse(args.TARGET);
-    } catch(e) {
-      console.error('[optimizer] 预测值或真实值格式错误，需为JSON数组');
-      return;
-    }
+    const pred = MLUtils.Validation.parseMatrix(args.PRED, 'optimizer');
+    const target = MLUtils.Validation.parseMatrix(args.TARGET, 'optimizer');
+    if (!pred || !target) return;
 
     const lossType = args.LOSS || 'mse';
     const learningRate = parseFloat(args.LR) || 0.01;
@@ -518,28 +534,17 @@ class EtudeTurboWarpMLOptimizer {
 
 class EtudeTurboWarpMLLinearAlgebra {
   matrix_multiplication(args) {
-    try {
-      const a = JSON.parse(args.A);
-      const b = JSON.parse(args.B);
-      const result = MLUtils.matMul(a, b);
-      return JSON.stringify(result);
-    } catch(e) {
-      return '[]';
-    }
+    const a = MLUtils.Validation.parseMatrix(args.A, 'matrixMul');
+    const b = MLUtils.Validation.parseMatrix(args.B, 'matrixMul');
+    if (!a || !b) return '[]';
+    return JSON.stringify(MLUtils.matMul(a, b));
   }
 
   matrix_add(args) {
-    try {
-      const a = JSON.parse(args.A);
-      const b = JSON.parse(args.B);
-      if (!a || !b || a.length !== b.length || !a[0] || !b[0] || a[0].length !== b[0].length) {
-        return '[]';
-      }
-      const result = a.map((row, i) => row.map((val, j) => val + b[i][j]));
-      return JSON.stringify(result);
-    } catch(e) {
-      return '[]';
-    }
+    const a = MLUtils.Validation.parseMatrix(args.A, 'matrixAdd');
+    const b = MLUtils.Validation.parseMatrix(args.B, 'matrixAdd');
+    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return '[]';
+    return JSON.stringify(MLUtils.hadamard(a, b));
   }
 }
 
@@ -549,6 +554,28 @@ class EtudeTurboWarpML {
     this.autograd = new EtudeTurboWarpMLAutograd(this.core);
     this.optimizer = new EtudeTurboWarpMLOptimizer(this.core);
     this.linearAlgebra = new EtudeTurboWarpMLLinearAlgebra();
+    
+    // 自动生成代理方法
+    this._setupAutoProxy();
+  }
+
+  _setupAutoProxy() {
+    const modules = {
+      core: this.core,
+      optimizer: this.optimizer,
+      linearAlgebra: this.linearAlgebra
+    };
+
+    Object.entries(modules).forEach(([moduleName, module]) => {
+      const methodNames = Object.getOwnPropertyNames(Object.getPrototypeOf(module))
+        .filter(name => name !== 'constructor' && typeof module[name] === 'function' && !name.startsWith('_'));
+      
+      methodNames.forEach(methodName => {
+        if (!this[methodName]) {
+          this[methodName] = (...args) => module[methodName](...args);
+        }
+      });
+    });
   }
 
   getInfo() {
@@ -559,9 +586,8 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xin',
-      version: '0.0.1', 
+      version: '0.0.1',
       blocks: [
-        // 核心模块
         {
           opcode: 'startModelDefinition',
           blockType: Scratch.BlockType.COMMAND,
@@ -670,19 +696,11 @@ class EtudeTurboWarpML {
       }
     };
   }
-
-  // 代理方法
-  startModelDefinition(args) { return this.core.startModelDefinition(args); }
-  addLinearLayer(args) { return this.core.addLinearLayer(args); }
-  endModelDefinition() { return this.core.endModelDefinition(); }
-  forward(args) { return this.core.forward(args); }
-  getModelStructure() { return this.core.getModelStructure(); }
-  clearModel() { return this.core.clearModel(); }
-  isModelDefined() { return this.core.isModelDefined(); }
-  stepSGD(args) { return this.optimizer.stepSGD(args); }
-  matrixMultiplication(args) { return this.linearAlgebra.matrix_multiplication(args); }
-  matrixAddition(args) { return this.linearAlgebra.matrix_add(args); }
 }
 
 // 注册扩展
-Scratch.extensions.register(new EtudeTurboWarpML());
+if (typeof Scratch !== 'undefined') {
+  Scratch.extensions.register(new EtudeTurboWarpML());
+} else {
+  console.warn('Scratch环境未找到');
+}
