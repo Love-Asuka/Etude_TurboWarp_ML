@@ -15,7 +15,7 @@ const MLUtils = {
 
     ensureModel(state, context) {
       if (!state.isModelDefined) {
-        console.error(`[${context}] 模型未定义`);
+        console.error(`[${context}] 模型未定义或未编译`);
         return false;
       }
       return true;
@@ -181,13 +181,14 @@ const MLUtils = {
 
 class EtudeTurboWarpMLCore {
   constructor() {
+    // _pendingLayers 用于存储 addLinearLayer 的配置，直到调用 endModelDefinition
+    this._pendingLayers = [];
     this.globalState = this._createFreshState();
   }
 
   _createFreshState() {
     return {
       layers: [],
-      currentInputDim: null,
       isModelDefined: false,
       computationGraph: { forward: [], backward: [] },
       modelMeta: {
@@ -210,99 +211,111 @@ class EtudeTurboWarpMLCore {
     };
   }
 
-  startModelDefinition(args) {
-    const inputDim = parseInt(args.INPUT_DIM);
-    if (isNaN(inputDim) || inputDim <= 0) {
-      console.error('[core] 输入维度必须是正整数');
-      return;
-    }
-
-    this.globalState = this._createFreshState();
-    this.globalState.currentInputDim = inputDim;
-    this.globalState.modelMeta.inputDim = inputDim;
-    console.log(`[core] 模型定义开始，输入维度: ${inputDim}`);
-  }
+  // 移除 startModelDefinition，改用 clearModel 逻辑或直接在 addLinearLayer 时重置 pending
+  // 这里选择 addLinearLayer 只是添加配置，不涉及具体维度计算
 
   addLinearLayer(args) {
-    if (this.globalState.currentInputDim === null) {
-      console.error('[core] 请先调用"开始模型定义"');
-      return;
-    }
-
     const outputDim = parseInt(args.OUTPUT_DIM);
     const activation = args.ACTIVATION;
+    
     if (isNaN(outputDim) || outputDim <= 0) {
       console.error('[core] 输出维度必须是正整数');
       return;
     }
 
-    const layerIndex = this.globalState.layers.length;
-    const layerId = `layer_${layerIndex}_linear`;
-    
-    const inputName = layerIndex === 0 ? 'tensor_0' : `tensor_${layerIndex}`;
-    const linearOutputName = `linear_${layerIndex + 1}`;
-    const activationOutputName = `tensor_${layerIndex + 1}`;
-
-    const layerConfig = {
-      id: layerId,
+    // 暂存层配置
+    this._pendingLayers.push({
       type: 'linear',
-      input_dim: this.globalState.currentInputDim,
       output_dim: outputDim,
-      activation: activation,
-      input_name: inputName,
-      output_name: activationOutputName
-    };
-
-    this.globalState.layers.push(layerConfig);
-    this.globalState.computationGraph.forward.push({
-      id: `op_${layerIndex + 1}`,
-      type: 'linear',
-      inputs: [inputName],
-      outputs: [linearOutputName],
-      layerId: layerId
+      activation: activation
     });
 
-    if (activation !== 'none') {
-      this.globalState.computationGraph.forward.push({
-        id: `act_${layerIndex + 1}`,
-        type: 'activation',
-        activation_type: activation,
-        inputs: [linearOutputName],
-        outputs: [activationOutputName]
-      });
-    }
-
-    this.globalState.gradients[layerId] = this._generateGradientStructure(layerConfig);
-    this.globalState.currentInputDim = outputDim;
-    this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
-    this.globalState.modelMeta.outputDim = outputDim;
-
-    console.log(`[core] 添加层 ${layerIndex}: ${layerId} (${inputName} -> ${activationOutputName})`);
+    console.log(`[core] 层配置已添加 (待编译): Out=${outputDim}, Act=${activation}`);
   }
 
-  endModelDefinition(args = {}) {
-    if (this.globalState.layers.length === 0) {
-      console.error('[core] 模型中至少需要一个层');
+  endModelDefinition(args) {
+    // 这里接收 INPUT_DIM
+    const inputDim = parseInt(args.INPUT_DIM);
+    const initStrategy = args.INIT || 'he';
+
+    if (isNaN(inputDim) || inputDim <= 0) {
+      console.error('[core] 模型输入维度必须是正整数');
       return;
     }
 
-    this.globalState.isModelDefined = true;
-    const initStrategy = args.INIT || 'he';
+    if (this._pendingLayers.length === 0) {
+      console.error('[core] 模型为空，请先添加层');
+      return;
+    }
 
-    this.globalState.layers.forEach((layer) => {
-      const {input_dim: inDim, output_dim: outDim, id} = layer;
-      
-      // 只有在参数尚未初始化时才进行初始化 (防止覆盖 loadModel 的结果)
-      if (!this.globalState.parameters[id]) {
-          const generator = MLUtils.Initializers[initStrategy](inDim, outDim);
-          this.globalState.parameters[id] = {
-            weight: Array(outDim).fill().map(() => Array(inDim).fill().map(generator)),
-            bias: Array(outDim).fill(0)
-          };
+    // 重置并开始构建真正的模型状态
+    this.globalState = this._createFreshState();
+    this.globalState.modelMeta.inputDim = inputDim;
+    
+    let currentInputDim = inputDim;
+
+    // 遍历待处理的层配置，构建计算图和参数
+    this._pendingLayers.forEach((layerConfig, index) => {
+      const layerId = `layer_${index}_linear`;
+      const inputName = index === 0 ? 'tensor_0' : `tensor_${index}`;
+      const linearOutputName = `linear_${index + 1}`;
+      const activationOutputName = `tensor_${index + 1}`;
+
+      // 补全层配置信息
+      const fullLayerConfig = {
+        id: layerId,
+        type: 'linear',
+        input_dim: currentInputDim,
+        output_dim: layerConfig.output_dim,
+        activation: layerConfig.activation,
+        input_name: inputName,
+        output_name: activationOutputName
+      };
+
+      this.globalState.layers.push(fullLayerConfig);
+
+      // 构建计算图节点
+      this.globalState.computationGraph.forward.push({
+        id: `op_${index + 1}`,
+        type: 'linear',
+        inputs: [inputName],
+        outputs: [linearOutputName],
+        layerId: layerId
+      });
+
+      if (layerConfig.activation !== 'none') {
+        this.globalState.computationGraph.forward.push({
+          id: `act_${index + 1}`,
+          type: 'activation',
+          activation_type: layerConfig.activation,
+          inputs: [linearOutputName],
+          outputs: [activationOutputName]
+        });
       }
+
+      // 初始化参数
+      const generator = MLUtils.Initializers[initStrategy](currentInputDim, layerConfig.output_dim);
+      this.globalState.parameters[layerId] = {
+        weight: Array(layerConfig.output_dim).fill().map(() => Array(currentInputDim).fill().map(generator)),
+        bias: Array(layerConfig.output_dim).fill(0)
+      };
+
+      // 初始化梯度结构
+      this.globalState.gradients[layerId] = this._generateGradientStructure(fullLayerConfig);
+
+      // 更新下一层的输入维度
+      currentInputDim = layerConfig.output_dim;
     });
 
-    console.log('[core] 模型定义完成');
+    // 完成构建
+    this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
+    this.globalState.modelMeta.outputDim = currentInputDim;
+    this.globalState.isModelDefined = true;
+    
+    // 清空待处理列表
+    this._pendingLayers = [];
+
+    console.log(`[core] 模型构建完成。输入: ${inputDim}, 输出: ${currentInputDim}, 层数: ${this.globalState.layers.length}`);
   }
 
   forward(args) {
@@ -386,7 +399,8 @@ class EtudeTurboWarpMLCore {
       newState.modelMeta = modelData.meta;
       newState.computationGraph = modelData.computation_graph;
       newState.isModelDefined = true;
-      newState.currentInputDim = modelData.meta.outputDim; 
+      // pendingLayers should be cleared if loading a pre-built model
+      this._pendingLayers = []; 
 
       if (Array.isArray(modelData.layers)) {
         modelData.layers.forEach(layerData => {
@@ -418,7 +432,8 @@ class EtudeTurboWarpMLCore {
 
   clearModel() {
     this.globalState = this._createFreshState();
-    console.log('[core] 模型已清除');
+    this._pendingLayers = []; // 同时也清除待构建的层
+    console.log('[core] 模型及待构建层已清除');
   }
 
   isModelDefined() {
@@ -628,13 +643,6 @@ class EtudeTurboWarpML {
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
         {
-          opcode: 'startModelDefinition',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '开始定义模型，输入维度 [INPUT_DIM]',
-          arguments: { INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 } },
-          disableMonitor: true
-        },
-        {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
           text: '添加线性层 输出维度 [OUTPUT_DIM] 激活函数 [ACTIVATION]',
@@ -647,7 +655,10 @@ class EtudeTurboWarpML {
         {
           opcode: 'endModelDefinition',
           blockType: Scratch.BlockType.COMMAND,
-          text: '结束定义并初始化',
+          text: '构建并初始化模型 输入维度 [INPUT_DIM]',
+          arguments: {
+            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 }
+          },
           disableMonitor: true
         },
         {
