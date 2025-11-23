@@ -1,6 +1,3 @@
-// Etude-TurboWarp-ML 扩展
-// 版本: 0.1.1 (优化SGD流程，移除前端自动微分积木)
-
 const MLUtils = {
   transpose(matrix) {
     if (!matrix || !Array.isArray(matrix) || matrix.length === 0 || !Array.isArray(matrix[0])) return [];
@@ -534,7 +531,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xin',
-      version: '0.1.1',
+      version: '0.0.1',
       blocks: [
         // 核心模块
         {
