@@ -1,3 +1,6 @@
+// Etude-TurboWarp-ML 扩展
+// 版本: 0.1.1 (优化SGD流程，移除前端自动微分积木)
+
 const MLUtils = {
   transpose(matrix) {
     if (!matrix || !Array.isArray(matrix) || matrix.length === 0 || !Array.isArray(matrix[0])) return [];
@@ -58,22 +61,51 @@ const MLUtils = {
       case 'relu':
         const reluGrad = inputData.map(row => row.map(val => val > 0 ? 1 : 0));
         return MLUtils.hadamard(reluGrad, outputGrad);
-      
       case 'tanh':
         const tanhGrad = inputData.map(row => row.map(val => 1 - val * val));
         return MLUtils.hadamard(tanhGrad, outputGrad);
-      
       case 'sigmoid':
         const sigGrad = inputData.map(row => row.map(val => val * (1 - val)));
         return MLUtils.hadamard(sigGrad, outputGrad);
-      
       case 'softmax':
-        // 简化版：假设交叉熵损失的组合梯度，返回 outputGrad
-        // 完整实现需要计算雅可比矩阵，这里做近似处理
-        return outputGrad.map(row => [...row]); // 深拷贝
-      
+        // 注意: 当softmax与交叉熵组合使用时，梯度简化为 pred - target
+        // 此处仅传递梯度，实际计算在交叉熵损失函数中完成
+        return outputGrad.map(row => [...row]);
       default:
-        return outputGrad.map(row => [...row]); // 无激活函数，直接返回梯度
+        return outputGrad.map(row => [...row]);
+    }
+  },
+
+  computeLossAndGradient(pred, target, lossType) {
+    if (!pred || !target || pred.length !== target.length) {
+      console.error('[ML] 预测值与真实值维度不匹配');
+      return { loss: 0, grad: [] };
+    }
+
+    switch(lossType) {
+      case 'mse':
+        const mseGrad = pred.map((row, i) => 
+          row.map((val, j) => 2 * (val - target[i][j]))
+        );
+        const mseLoss = pred.reduce((sum, row, i) => 
+          sum + row.reduce((rowSum, val, j) => rowSum + Math.pow(val - target[i][j], 2), 0), 0
+        ) / pred.length;
+        return { loss: mseLoss, grad: mseGrad };
+
+      case 'crossentropy':
+        const epsilon = 1e-7;
+        const ceLoss = -pred.reduce((sum, row, i) => 
+          sum + row.reduce((rowSum, val, j) => rowSum + target[i][j] * Math.log(val + epsilon), 0), 0
+        ) / pred.length;
+        // 假设pred已经过softmax处理，梯度简化为 pred - target
+        const ceGrad = pred.map((row, i) => 
+          row.map((val, j) => val - target[i][j])
+        );
+        return { loss: ceLoss, grad: ceGrad };
+
+      default:
+        console.error(`[ML] 不支持的损失函数: ${lossType}`);
+        return { loss: 0, grad: [] };
     }
   }
 };
@@ -102,7 +134,6 @@ class EtudeTurboWarpMLCore {
     };
   }
 
-  // 开始模型定义
   startModelDefinition(args) {
     const inputDim = parseInt(args.INPUT_DIM);
     if (isNaN(inputDim) || inputDim <= 0) {
@@ -134,9 +165,7 @@ class EtudeTurboWarpMLCore {
     
     const inputName = layerIndex === 0 ? 'tensor_0' : `tensor_${layerIndex}`;
     const linearOutputName = `linear_${layerIndex + 1}`;
-    const activationOutputName = layerIndex === this.globalState.layers.length 
-      ? 'final_output' 
-      : `tensor_${layerIndex + 1}`;
+    const activationOutputName = `tensor_${layerIndex + 1}`;
 
     const layerConfig = {
       id: layerId,
@@ -188,6 +217,7 @@ class EtudeTurboWarpMLCore {
 
     this.globalState.isModelDefined = true;
 
+    // He初始化
     this.globalState.layers.forEach((layer) => {
       const inDim = layer.input_dim;
       const outDim = layer.output_dim;
@@ -205,7 +235,6 @@ class EtudeTurboWarpMLCore {
     console.log('[core] 模型定义完成，参数已初始化');
   }
 
-  // 前向传播
   forward(args) {
     if (!this.globalState.isModelDefined) {
       console.error('[core] 模型未定义，无法执行推理');
@@ -225,12 +254,10 @@ class EtudeTurboWarpMLCore {
       return '[]';
     }
 
-    // 重置前向数据缓存
     this.globalState.forwardData = {};
     this.globalState.forwardData['tensor_0'] = input;
     let currentTensor = input;
 
-    // 按计算图执行
     for (const node of this.globalState.computationGraph.forward) {
       if (node.type === 'linear') {
         currentTensor = this._linearForward(node, currentTensor);
@@ -238,7 +265,6 @@ class EtudeTurboWarpMLCore {
         currentTensor = MLUtils.applyActivation(currentTensor, node.activation_type);
       }
       
-      // 缓存每个节点的输出
       const outputName = node.outputs[0];
       this.globalState.forwardData[outputName] = currentTensor;
     }
@@ -246,7 +272,6 @@ class EtudeTurboWarpMLCore {
     return JSON.stringify(currentTensor);
   }
 
-  // 线性层前向计算
   _linearForward(node, input) {
     const layerId = node.params[0].split('.')[0];
     const layerParams = this.globalState.parameters[layerId];
@@ -256,14 +281,12 @@ class EtudeTurboWarpMLCore {
       return input;
     }
 
-    // output = input @ weight^T + bias
     const weightT = MLUtils.transpose(layerParams.weight);
     const output = MLUtils.matMul(input, weightT);
     
     return output.map(row => row.map((val, j) => val + layerParams.bias[j]));
   }
 
-  // 获取模型结构
   getModelStructure() {
     if (!this.globalState.isModelDefined) {
       return JSON.stringify({ error: '模型尚未定义' }, null, 2);
@@ -290,24 +313,22 @@ class EtudeTurboWarpMLCore {
     }, null, 2);
   }
 
-  // 清除模型
   clearModel() {
     this.globalState = this._createFreshState();
     console.log('[core] 模型已清除');
   }
 
-  // 检查模型是否已定义
   isModelDefined() {
     return this.globalState.isModelDefined;
   }
 }
 
+// 后端自动微分模块（不暴露为积木）
 class EtudeTurboWarpMLAutograd {
   constructor(coreInstance) {
     this.core = coreInstance;
   }
 
-  // 反向传播
   backward(args) {
     if (!this.core.globalState.isModelDefined) {
       console.error('[autograd] 模型未定义');
@@ -325,18 +346,14 @@ class EtudeTurboWarpMLAutograd {
     const tape = [...this.core.globalState.computationGraph.forward].reverse();
     const gradBuffer = {};
 
-    // ✅ 修复：正确初始化最后一层的梯度
-    const firstNode = tape[0]; // 反转后的第一个是原图最后一个节点
+    const firstNode = tape[0];
     if (!firstNode) {
       console.error('[autograd] 计算图为空');
       return;
     }
     
-    // 将梯度绑定到第一个节点的输入
     gradBuffer[firstNode.inputs[0]] = outputGrad;
-    console.log(`[autograd] 初始化梯度: ${firstNode.inputs[0]}`);
 
-    // 反向遍历计算图
     for (const node of tape) {
       if (node.type === 'linear') {
         this._linearBackward(node, gradBuffer);
@@ -348,7 +365,6 @@ class EtudeTurboWarpMLAutograd {
     console.log('[autograd] 反向传播完成');
   }
 
-  // 线性层反向（修复：权重梯度维度）
   _linearBackward(node, gradBuffer) {
     const inputName = node.inputs[0];
     const outputName = node.outputs[0];
@@ -378,11 +394,8 @@ class EtudeTurboWarpMLAutograd {
       weight: weightGrad, 
       bias: biasGrad 
     };
-    
-    console.log(`[autograd] 计算层 ${layerId} 梯度: weightGrad[${weightGrad.length}x${weightGrad[0].length}]`);
   }
 
-  // 激活层反向
   _activationBackward(node, gradBuffer) {
     const inputName = node.inputs[0];
     const outputName = node.outputs[0];
@@ -401,17 +414,8 @@ class EtudeTurboWarpMLAutograd {
 
     const inputGrad = MLUtils.activationDerivative(inputData, node.activation_type, outputGrad);
     gradBuffer[inputName] = inputGrad;
-    
-    console.log(`[autograd] 计算激活 ${node.activation_type} 梯度`);
   }
 
-  // 获取参数梯度
-  getParamGrad(args) {
-    const grad = this.core.globalState.gradients[args.PARAM];
-    return JSON.stringify(grad || { weight: [], bias: [] });
-  }
-
-  // 清零梯度
   zeroGrad() {
     this.core.globalState.layers.forEach(layer => {
       const { id, input_dim: inDim, output_dim: outDim } = layer;
@@ -424,23 +428,41 @@ class EtudeTurboWarpMLAutograd {
   }
 }
 
+// 优化器模块
 class EtudeTurboWarpMLOptimizer {
   constructor(coreInstance) {
     this.core = coreInstance;
-    this.learningRate = 0.01;
   }
 
-  setLearningRate(args) {
-    this.learningRate = parseFloat(args.LR) || 0.01;
-    console.log(`[optimizer] 学习率设置为: ${this.learningRate}`);
-  }
-
-  stepSGD() {
+  stepSGD(args) {
     if (!this.core.globalState.isModelDefined) {
       console.error('[optimizer] 模型未定义');
       return;
     }
 
+    let pred, target;
+    try {
+      pred = JSON.parse(args.PRED);
+      target = JSON.parse(args.TARGET);
+    } catch(e) {
+      console.error('[optimizer] 预测值或真实值格式错误，需为JSON数组');
+      return;
+    }
+
+    const lossType = args.LOSS || 'mse';
+    const learningRate = parseFloat(args.LR) || 0.01;
+
+    // 1. 清零梯度
+    this.core.autograd.zeroGrad();
+
+    // 2. 计算损失和输出梯度
+    const { loss, grad } = MLUtils.computeLossAndGradient(pred, target, lossType);
+    console.log(`[optimizer] 损失值 (${lossType}): ${loss.toFixed(6)}`);
+
+    // 3. 执行反向传播
+    this.core.autograd.backward({ GRAD: JSON.stringify(grad) });
+
+    // 4. 更新参数
     let updateCount = 0;
     this.core.globalState.layers.forEach(layer => {
       const layerId = layer.id;
@@ -452,22 +474,22 @@ class EtudeTurboWarpMLOptimizer {
         return;
       }
 
-      // 参数更新
       layerParams.weight = layerParams.weight.map((row, i) =>
-        row.map((val, j) => val - this.learningRate * layerGrad.weight[i][j])
+        row.map((val, j) => val - learningRate * layerGrad.weight[i][j])
       );
       
       layerParams.bias = layerParams.bias.map((val, i) =>
-        val - this.learningRate * layerGrad.bias[i]
+        val - learningRate * layerGrad.bias[i]
       );
       
       updateCount++;
     });
 
-    console.log(`[optimizer] SGD完成，更新 ${updateCount} 层`);
+    console.log(`[optimizer] SGD完成，更新 ${updateCount} 层，学习率: ${learningRate}`);
   }
 }
 
+// 线性代数工具类
 class EtudeTurboWarpMLLinearAlgebra {
   matrix_multiplication(args) {
     try {
@@ -495,6 +517,7 @@ class EtudeTurboWarpMLLinearAlgebra {
   }
 }
 
+// 主扩展类
 class EtudeTurboWarpML {
   constructor() {
     this.core = new EtudeTurboWarpMLCore();
@@ -511,7 +534,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xin',
-      version: '0.0.1', // ✅ 版本更新
+      version: '0.1.1',
       blocks: [
         // 核心模块
         {
@@ -562,43 +585,22 @@ class EtudeTurboWarpML {
           text: '模型是否已定义',
           disableMonitor: true
         },
-        { blockType: Scratch.BlockType.LABEL, text: '自动微分模块' },
-        // 自动微分
-        {
-          opcode: 'backward',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '对输出梯度 [GRAD] 执行反向传播',
-          arguments: { GRAD: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,0]]' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'getParamGrad',
-          blockType: Scratch.BlockType.REPORTER,
-          text: '获取 [PARAM] 的梯度',
-          arguments: { PARAM: { type: Scratch.ArgumentType.STRING, menu: 'PARAM_MENU', defaultValue: 'layer_0_linear' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'zeroGrad',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '清零所有梯度',
-          disableMonitor: true
-        },
+        
         { blockType: Scratch.BlockType.LABEL, text: '优化器模块' },
         // 优化器
         {
-          opcode: 'setLearningRate',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '设置学习率 [LR]',
-          arguments: { LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 } },
-          disableMonitor: true
-        },
-        {
           opcode: 'stepSGD',
           blockType: Scratch.BlockType.COMMAND,
-          text: '执行SGD优化步骤',
+          text: 'SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]',
+          arguments: {
+            PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0.2, 0.8]]' },
+            TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0, 1]]' },
+            LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' },
+            LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 }
+          },
           disableMonitor: true
         },
+        
         { blockType: Scratch.BlockType.LABEL, text: '线性代数工具' },
         // 线性代数
         {
@@ -633,22 +635,15 @@ class EtudeTurboWarpML {
             { text: '无', value: 'none' }
           ]
         },
-        PARAM_MENU: 'getParamMenuList' 
+        LOSS_MENU: {
+          acceptReporters: false,
+          items: [
+            { text: '均方误差(MSE)', value: 'mse' },
+            { text: '交叉熵', value: 'crossentropy' }
+          ]
+        }
       }
     };
-  }
-
-  getParamMenuList() {
-    try {
-      const gradients = this.core.globalState.gradients;
-      const keys = Object.keys(gradients);
-      if (keys.length === 0) {
-        return [{ text: '请先定义模型', value: 'none' }];
-      }
-      return keys.map(key => ({ text: key, value: key }));
-    } catch(e) {
-      return [{ text: '请先定义模型', value: 'none' }];
-    }
   }
 
   // 代理方法
@@ -659,11 +654,7 @@ class EtudeTurboWarpML {
   getModelStructure() { return this.core.getModelStructure(); }
   clearModel() { return this.core.clearModel(); }
   isModelDefined() { return this.core.isModelDefined(); }
-  backward(args) { return this.autograd.backward(args); }
-  getParamGrad(args) { return this.autograd.getParamGrad(args); }
-  zeroGrad() { return this.autograd.zeroGrad(); }
-  setLearningRate(args) { return this.optimizer.setLearningRate(args); }
-  stepSGD() { return this.optimizer.stepSGD(); }
+  stepSGD(args) { return this.optimizer.stepSGD(args); }
   matrixMultiplication(args) { return this.linearAlgebra.matrix_multiplication(args); }
   matrixAddition(args) { return this.linearAlgebra.matrix_add(args); }
 }
