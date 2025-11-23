@@ -133,6 +133,13 @@ const MLUtils = {
     );
   },
 
+  // 矩阵加法
+  matAdd(a, b) {
+    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
+    return a.map((row, i) => row.map((val, j) => val + b[i][j]));
+  },
+
+  // 逐元素乘法 (Hadamard Product)
   hadamard(a, b) {
     if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
     return a.map((row, i) => row.map((val, j) => val * b[i][j]));
@@ -484,8 +491,10 @@ class EtudeTurboWarpMLAutograd {
 }
 
 class EtudeTurboWarpMLOptimizer {
-  constructor(coreInstance) {
+  // 修复：这里接收 autograd 实例
+  constructor(coreInstance, autogradInstance) {
     this.core = coreInstance;
+    this.autograd = autogradInstance;
   }
 
   stepSGD(args) {
@@ -498,12 +507,14 @@ class EtudeTurboWarpMLOptimizer {
     const lossType = args.LOSS || 'mse';
     const learningRate = parseFloat(args.LR) || 0.01;
 
-    this.core.autograd.zeroGrad();
+    // 修复：使用 this.autograd 而不是 this.core.autograd
+    this.autograd.zeroGrad();
 
     const { loss, grad } = MLUtils.computeLossAndGradient(pred, target, lossType);
     console.log(`[optimizer] 损失值 (${lossType}): ${loss.toFixed(6)}`);
 
-    this.core.autograd.backward({ GRAD: JSON.stringify(grad) });
+    // 修复：使用 this.autograd
+    this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
     let updateCount = 0;
     this.core.globalState.layers.forEach(layer => {
@@ -538,11 +549,13 @@ class EtudeTurboWarpMLLinearAlgebra {
     if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matMul(a, b));
   }
+  
+  // 修复：使用正确的加法函数 matAdd
   matrixAddition(args) {
     const a = MLUtils.Validation.parseMatrix(args.A, 'matrixAdd');
     const b = MLUtils.Validation.parseMatrix(args.B, 'matrixAdd');
     if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return '[]';
-    return JSON.stringify(MLUtils.hadamard(a, b));
+    return JSON.stringify(MLUtils.matAdd(a, b));
   }
 }
 
@@ -550,7 +563,8 @@ class EtudeTurboWarpML {
   constructor() {
     this.core = new EtudeTurboWarpMLCore();
     this.autograd = new EtudeTurboWarpMLAutograd(this.core);
-    this.optimizer = new EtudeTurboWarpMLOptimizer(this.core);
+    // 修复：传递 autograd 实例给优化器
+    this.optimizer = new EtudeTurboWarpMLOptimizer(this.core, this.autograd);
     this.linearAlgebra = new EtudeTurboWarpMLLinearAlgebra();
     
     // 自动生成代理方法
@@ -695,6 +709,5 @@ class EtudeTurboWarpML {
     };
   }
 }
-
 
 Scratch.extensions.register(new EtudeTurboWarpML());
