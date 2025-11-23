@@ -30,9 +30,9 @@
 
 ### 1. 模型定义
 ```scratch
-开始模型定义，输入维度 [INPUT_DIM]
+开始定义模型，输入维度 [INPUT_DIM]
 添加线性层 输出维度 [OUTPUT_DIM] 激活函数 [ACTIVATION]
-结束模型定义
+结束定义并初始化
 ```
 
 ### 2. 模型推理
@@ -42,14 +42,21 @@
 
 ### 3. 模型训练
 ```scratch
-SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]
+SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]
 ```
 
 ### 4. 模型管理
 ```scratch
-获取模型结构JSON
-清除模型
-模型是否已定义
+导出模型 (JSON)
+加载模型 (JSON) [JSON]
+清除当前模型
+模型已加载?
+```
+
+### 5. 线性代数运算
+```scratch
+矩阵 [A] × [B]
+矩阵 [A] + [B]
 ```
 
 ## 权重文件格式
@@ -62,27 +69,47 @@ SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]
 示例结构：
 ```json
 {
-  "format": "turbowarp-nn-weights",
+  "format": "etude-ml-model",
   "version": "1.0",
-  "model_meta": {
-    "name": "示例神经网络",
-    "total_layers": 3,
-    "input_dim": 4,
-    "output_dim": 2
+  "meta": {
+    "name": "Example-Model",
+    "inputDim": 2,
+    "outputDim": 1,
+    "totalLayers": 2,
+    "created": 1700000000000
   },
   "layers": [
     {
-      "id": "layer_0_linear",
-      "type": "linear",
-      "input_dim": 4,
-      "output_dim": 8,
-      "activation": "relu",
+      "config": {
+        "id": "layer_0_linear",
+        "type": "linear",
+        "input_dim": 2,
+        "output_dim": 2,
+        "activation": "relu",
+        "input_name": "tensor_0",
+        "output_name": "tensor_1"
+      },
       "parameters": {
-        "weight": { "shape": [8, 4], "data": [...] },
-        "bias": { "shape": [8], "data": [...] }
+        "weight": [
+          [1, 0],
+          [0, 1]
+        ],
+        "bias": [0, 0]
       }
     }
-  ]
+  ],
+  "computation_graph": {
+    "forward": [
+      {
+        "id": "op_1",
+        "type": "linear",
+        "inputs": ["tensor_0"],
+        "outputs": ["linear_1"],
+        "layerId": "layer_0_linear"
+      }
+    ],
+    "backward": []
+  }
 }
 ```
 
@@ -96,12 +123,14 @@ SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]
 3. **EtudeTurboWarpMLOptimizer**: 优化器模块，提供SGD优化算法
 4. **EtudeTurboWarpMLLinearAlgebra**: 线性代数工具模块，提供矩阵运算功能
 
+所有模块通过代理模式统一暴露接口，方便在TurboWarp扩展框架中使用。
+
 ### 计算图
-系统通过构建计算图来管理前向和反向传播过程，确保梯度能够正确计算和传播。
+系统通过构建计算图来管理前向和反向传播过程，确保梯度能够正确计算和传播。计算图包含前向传播路径和反向传播路径。
 
 ### 初始化策略
 支持多种参数初始化策略：
-- He初始化
+- He初始化（默认）
 - Xavier初始化
 - 零初始化
 - 一初始化
@@ -118,6 +147,7 @@ SGD 预测值 [PRED] 真实值 [TARGET] 损失函数 [LOSS] 学习率 [LR]
 - 增加更多优化算法（如Adam、RMSprop等）
 - 提供更丰富的损失函数
 - 增强错误处理和验证机制
+- 添加更多实用工具函数
 
 ## 作者
 
@@ -125,4 +155,4 @@ Asuka | Lin Xi
 
 ## 版本
 
-0.0.1
+0.0.2
