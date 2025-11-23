@@ -51,23 +51,37 @@ const MLUtils = {
     }
   },
 
-  activationDerivative(inputData, activation_type, outputGrad) {
-    if (!inputData || !outputGrad) return [];
+  activationDerivative(postActivation, activation_type, outputGrad) {
+    if (!postActivation || !outputGrad) return [];
     
     switch(activation_type) {
       case 'relu':
-        const reluGrad = inputData.map(row => row.map(val => val > 0 ? 1 : 0));
+        const reluGrad = postActivation.map(row => row.map(val => val > 0 ? 1 : 0));
         return MLUtils.hadamard(reluGrad, outputGrad);
+      
       case 'tanh':
-        const tanhGrad = inputData.map(row => row.map(val => 1 - val * val));
+        const tanhGrad = postActivation.map(row => row.map(val => 1 - val * val));
         return MLUtils.hadamard(tanhGrad, outputGrad);
+      
       case 'sigmoid':
-        const sigGrad = inputData.map(row => row.map(val => val * (1 - val)));
+        const sigGrad = postActivation.map(row => row.map(val => val * (1 - val)));
         return MLUtils.hadamard(sigGrad, outputGrad);
+      
       case 'softmax':
-        // 注意: 当softmax与交叉熵组合使用时，梯度简化为 pred - target
-        // 此处仅传递梯度，实际计算在交叉熵损失函数中完成
-        return outputGrad.map(row => [...row]);
+        return postActivation.map((row, i) => {
+          const rowGrad = outputGrad[i];
+          const n = row.length;
+          const result = new Array(n).fill(0);
+          
+          for (let j = 0; j < n; j++) {
+            for (let k = 0; k < n; k++) {
+              const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
+              result[j] += rowGrad[k] * jacobian;
+            }
+          }
+          return result;
+        });
+      
       default:
         return outputGrad.map(row => [...row]);
     }
@@ -81,12 +95,13 @@ const MLUtils = {
 
     switch(lossType) {
       case 'mse':
+        const batchSize = pred.length;
         const mseGrad = pred.map((row, i) => 
-          row.map((val, j) => 2 * (val - target[i][j]))
+          row.map((val, j) => 2 * (val - target[i][j]) / batchSize)
         );
         const mseLoss = pred.reduce((sum, row, i) => 
           sum + row.reduce((rowSum, val, j) => rowSum + Math.pow(val - target[i][j], 2), 0), 0
-        ) / pred.length;
+        ) / batchSize;
         return { loss: mseLoss, grad: mseGrad };
 
       case 'crossentropy':
@@ -94,7 +109,7 @@ const MLUtils = {
         const ceLoss = -pred.reduce((sum, row, i) => 
           sum + row.reduce((rowSum, val, j) => rowSum + target[i][j] * Math.log(val + epsilon), 0), 0
         ) / pred.length;
-        // 假设pred已经过softmax处理，梯度简化为 pred - target
+
         const ceGrad = pred.map((row, i) => 
           row.map((val, j) => val - target[i][j])
         );
@@ -127,7 +142,7 @@ class EtudeTurboWarpMLCore {
       },
       parameters: {},
       gradients: {},
-      forwardData: {}
+      forwardData: {} 
     };
   }
 
@@ -251,19 +266,35 @@ class EtudeTurboWarpMLCore {
       return '[]';
     }
 
+    const expectedDim = this.globalState.modelMeta.inputDim;
+    if (input[0].length !== expectedDim) {
+      console.error(`[core] 输入特征维度不匹配: 期望 ${expectedDim}, 得到 ${input[0].length}`);
+      return '[]';
+    }
+
     this.globalState.forwardData = {};
-    this.globalState.forwardData['tensor_0'] = input;
+    this.globalState.forwardData['tensor_0'] = {
+      preActivation: null, 
+      postActivation: input 
+    };
     let currentTensor = input;
+    let currentPreActivation = null;
 
     for (const node of this.globalState.computationGraph.forward) {
       if (node.type === 'linear') {
         currentTensor = this._linearForward(node, currentTensor);
+        currentPreActivation = currentTensor; // 线性层输出是"激活前"
       } else if (node.type === 'activation') {
-        currentTensor = MLUtils.applyActivation(currentTensor, node.activation_type);
+        const activatedTensor = MLUtils.applyActivation(currentTensor, node.activation_type);
+
+        this.globalState.forwardData[node.outputs[0]] = {
+          preActivation: currentTensor,
+          postActivation: activatedTensor
+        };
+        
+        currentTensor = activatedTensor;
+        currentPreActivation = null; // 重置
       }
-      
-      const outputName = node.outputs[0];
-      this.globalState.forwardData[outputName] = currentTensor;
     }
 
     return JSON.stringify(currentTensor);
@@ -320,7 +351,6 @@ class EtudeTurboWarpMLCore {
   }
 }
 
-// 后端自动微分模块（不暴露为积木）
 class EtudeTurboWarpMLAutograd {
   constructor(coreInstance) {
     this.core = coreInstance;
@@ -374,7 +404,7 @@ class EtudeTurboWarpMLAutograd {
 
     const layerId = node.params[0].split('.')[0];
     const layer = this.core.globalState.layers.find(l => l.id === layerId);
-    const inputData = this.core.globalState.forwardData?.[inputName];
+    const inputData = this.core.globalState.forwardData?.[inputName]?.postActivation;
     const weight = this.core.globalState.parameters[layerId]?.weight;
     
     if (!layer || !inputData || !weight) {
@@ -403,13 +433,18 @@ class EtudeTurboWarpMLAutograd {
       return;
     }
 
-    const inputData = this.core.globalState.forwardData?.[inputName];
-    if (!inputData) {
-      console.error(`[autograd] 未找到激活层输入 ${inputName}`);
+    const activationData = this.core.globalState.forwardData?.[outputName];
+    if (!activationData) {
+      console.error(`[autograd] 未找到激活层数据 ${outputName}`);
       return;
     }
 
-    const inputGrad = MLUtils.activationDerivative(inputData, node.activation_type, outputGrad);
+    const inputGrad = MLUtils.activationDerivative(
+      activationData.postActivation, 
+      node.activation_type, 
+      outputGrad
+    );
+    
     gradBuffer[inputName] = inputGrad;
   }
 
@@ -425,7 +460,6 @@ class EtudeTurboWarpMLAutograd {
   }
 }
 
-// 优化器模块
 class EtudeTurboWarpMLOptimizer {
   constructor(coreInstance) {
     this.core = coreInstance;
@@ -449,17 +483,13 @@ class EtudeTurboWarpMLOptimizer {
     const lossType = args.LOSS || 'mse';
     const learningRate = parseFloat(args.LR) || 0.01;
 
-    // 1. 清零梯度
     this.core.autograd.zeroGrad();
 
-    // 2. 计算损失和输出梯度
     const { loss, grad } = MLUtils.computeLossAndGradient(pred, target, lossType);
     console.log(`[optimizer] 损失值 (${lossType}): ${loss.toFixed(6)}`);
 
-    // 3. 执行反向传播
     this.core.autograd.backward({ GRAD: JSON.stringify(grad) });
 
-    // 4. 更新参数
     let updateCount = 0;
     this.core.globalState.layers.forEach(layer => {
       const layerId = layer.id;
@@ -486,7 +516,6 @@ class EtudeTurboWarpMLOptimizer {
   }
 }
 
-// 线性代数工具类
 class EtudeTurboWarpMLLinearAlgebra {
   matrix_multiplication(args) {
     try {
@@ -514,7 +543,6 @@ class EtudeTurboWarpMLLinearAlgebra {
   }
 }
 
-// 主扩展类
 class EtudeTurboWarpML {
   constructor() {
     this.core = new EtudeTurboWarpMLCore();
@@ -531,7 +559,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xin',
-      version: '0.0.1',
+      version: '0.0.1', 
       blocks: [
         // 核心模块
         {
