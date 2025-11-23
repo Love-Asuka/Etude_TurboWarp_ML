@@ -533,14 +533,13 @@ class EtudeTurboWarpMLOptimizer {
 }
 
 class EtudeTurboWarpMLLinearAlgebra {
-  matrix_multiplication(args) {
+  matrixMultiplication(args) {
     const a = MLUtils.Validation.parseMatrix(args.A, 'matrixMul');
     const b = MLUtils.Validation.parseMatrix(args.B, 'matrixMul');
     if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matMul(a, b));
   }
-
-  matrix_add(args) {
+  matrixAddition(args) {
     const a = MLUtils.Validation.parseMatrix(args.A, 'matrixAdd');
     const b = MLUtils.Validation.parseMatrix(args.B, 'matrixAdd');
     if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return '[]';
@@ -655,7 +654,7 @@ class EtudeTurboWarpML {
         { blockType: Scratch.BlockType.LABEL, text: '线性代数工具' },
         // 线性代数
         {
-          opcode: 'matrixMultiplication',
+          opcode: 'matrixMultiplication', // 这里是驼峰
           blockType: Scratch.BlockType.REPORTER,
           text: '矩阵 [A] × [B]',
           arguments: {
@@ -665,7 +664,7 @@ class EtudeTurboWarpML {
           disableMonitor: true
         },
         {
-          opcode: 'matrixAddition',
+          opcode: 'matrixAddition', // 这里是驼峰
           blockType: Scratch.BlockType.REPORTER,
           text: '矩阵 [A] + [B]',
           arguments: {
@@ -698,9 +697,5 @@ class EtudeTurboWarpML {
   }
 }
 
-// 注册扩展
-if (typeof Scratch !== 'undefined') {
-  Scratch.extensions.register(new EtudeTurboWarpML());
-} else {
-  console.warn('Scratch环境未找到');
-}
+
+Scratch.extensions.register(new EtudeTurboWarpML());
