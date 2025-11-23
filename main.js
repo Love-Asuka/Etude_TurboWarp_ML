@@ -654,7 +654,7 @@ class EtudeTurboWarpML {
         { blockType: Scratch.BlockType.LABEL, text: '线性代数工具' },
         // 线性代数
         {
-          opcode: 'matrixMultiplication', // 这里是驼峰
+          opcode: 'matrixMultiplication',
           blockType: Scratch.BlockType.REPORTER,
           text: '矩阵 [A] × [B]',
           arguments: {
@@ -664,7 +664,7 @@ class EtudeTurboWarpML {
           disableMonitor: true
         },
         {
-          opcode: 'matrixAddition', // 这里是驼峰
+          opcode: 'matrixAddition', 
           blockType: Scratch.BlockType.REPORTER,
           text: '矩阵 [A] + [B]',
           arguments: {
