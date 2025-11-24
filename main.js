@@ -8,14 +8,12 @@ const MLUtils = {
         }
         return parsed;
       } catch (e) {
-        console.error(`[${context}] 解析失败: ${e.message}`);
         return null;
       }
     },
 
     ensureModel(state, context) {
       if (!state.isModelDefined) {
-        console.error(`[${context}] 模型未定义或未编译`);
         return false;
       }
       return true;
@@ -23,7 +21,6 @@ const MLUtils = {
 
     matchDims(actual, expected, context) {
       if (actual !== expected) {
-        console.error(`[${context}] 维度不匹配: 期望 ${expected}, 得到 ${actual}`);
         return false;
       }
       return true;
@@ -32,7 +29,6 @@ const MLUtils = {
     validatePositiveInt(val, name, context = 'ML') {
       const num = parseInt(val);
       if (isNaN(num) || num <= 0) {
-        console.error(`[${context}] ${name} 必须是正整数`);
         return null;
       }
       return num;
@@ -114,7 +110,6 @@ const MLUtils = {
   matMul(a, b) {
     if (!a || !b || a.length === 0 || b.length === 0 || !a[0] || !b[0]) return [];
     if (a[0].length !== b.length) {
-      console.error(`[ML] 矩阵乘法维度不匹配: A[0].length=${a[0].length} ≠ B.length=${b.length}`);
       return [];
     }
     const bT = this.transpose(b); 
@@ -142,7 +137,6 @@ const MLUtils = {
 
   computeLossAndGradient(pred, target, lossType) {
     if (!pred || !target || pred.length !== target.length) {
-      console.error('[ML] 预测值与真实值维度不匹配');
       return { loss: 0, grad: [] };
     }
 
@@ -174,7 +168,6 @@ const MLUtils = {
       }
 
       default:
-        console.error(`[ML] 不支持的损失函数: ${lossType}`);
         return { loss: 0, grad: [] };
     }
   }
@@ -223,8 +216,6 @@ class EtudeTurboWarpMLCore {
       activation: args.ACTIVATION,
       use_bias: useBias
     });
-
-    console.log(`[core] 层配置已添加: Out=${outputDim}, Act=${args.ACTIVATION}, Bias=${useBias}`);
   }
 
   endModelDefinition(args) {
@@ -233,7 +224,6 @@ class EtudeTurboWarpMLCore {
 
     if (!inputDim) return;
     if (this._pendingLayers.length === 0) {
-      console.error('[core] 模型为空，请先添加层');
       return;
     }
 
@@ -296,8 +286,6 @@ class EtudeTurboWarpMLCore {
     this.globalState.modelMeta.outputDim = currentInputDim;
     this.globalState.isModelDefined = true;
     this._pendingLayers = [];
-
-    console.log(`[core] 模型构建完成。In: ${inputDim}, Out: ${currentInputDim}, Init: ${initStrategy}`);
   }
 
   forward(args) {
@@ -366,7 +354,6 @@ class EtudeTurboWarpMLCore {
     try {
       const modelData = JSON.parse(args.JSON);
       if (modelData.format !== 'etude-ml-model') {
-        console.error('[core] 无效的模型格式');
         return;
       }
 
@@ -393,9 +380,7 @@ class EtudeTurboWarpMLCore {
       }
 
       this.globalState = newState;
-      console.log(`[core] 模型已加载: ${newState.modelMeta.name}`);
     } catch (e) {
-      console.error(`[core] 模型加载失败: ${e.message}`);
     }
   }
 
@@ -425,7 +410,6 @@ class EtudeTurboWarpMLAutograd {
 
     const lastLayerOutDim = this.core.globalState.modelMeta.outputDim;
     if (outputGrad[0].length !== lastLayerOutDim) {
-        console.error(`[autograd] 梯度维度错误。期望: ${lastLayerOutDim}, 实际: ${outputGrad[0].length}`);
         return;
     }
 
@@ -508,7 +492,6 @@ class EtudeTurboWarpMLOptimizer {
     this.autograd.zeroGrad();
 
     const { loss, grad } = MLUtils.computeLossAndGradient(pred, target, lossType);
-    console.log(`[optimizer] Loss (${lossType}): ${loss.toFixed(6)}`);
 
     this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
@@ -520,22 +503,18 @@ class EtudeTurboWarpMLOptimizer {
       
       if (!layerGrad || !layerParams) return;
 
-      // 更新权重
       layerParams.weight = MLUtils.mapMatrices(
         layerParams.weight,
         layerGrad.weight,
         (w, g) => w - learningRate * g
       );
       
-      // 更新偏置（如果存在）
       if (layerParams.bias && layerGrad.bias) {
         layerParams.bias = layerParams.bias.map((b, i) => b - learningRate * layerGrad.bias[i]);
       }
       
       updateCount++;
     });
-
-    console.log(`[optimizer] SGD更新完成，层数: ${updateCount}`);
   }
 }
 
@@ -592,7 +571,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.3',
+      version: '0.0.4',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
         {
