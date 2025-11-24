@@ -1,10 +1,10 @@
 const MLUtils = {
   Validation: {
-    parseMatrix(str, context = 'ML') {
+    parseMatrix(str) {
       try {
         const parsed = JSON.parse(str);
         if (!Array.isArray(parsed) || !parsed[0] || !Array.isArray(parsed[0])) {
-          throw new Error('无效的矩阵格式，应为二维数组');
+          return null;
         }
         return parsed;
       } catch (e) {
@@ -12,26 +12,17 @@ const MLUtils = {
       }
     },
 
-    ensureModel(state, context) {
-      if (!state.isModelDefined) {
-        return false;
-      }
-      return true;
+    ensureModel(state) {
+      return state && state.isModelDefined;
     },
 
-    matchDims(actual, expected, context) {
-      if (actual !== expected) {
-        return false;
-      }
-      return true;
+    matchDims(actual, expected) {
+      return actual === expected;
     },
     
-    validatePositiveInt(val, name, context = 'ML') {
+    validatePositiveInt(val) {
       const num = parseInt(val);
-      if (isNaN(num) || num <= 0) {
-        return null;
-      }
-      return num;
+      return (isNaN(num) || num <= 0) ? null : num;
     }
   },
 
@@ -40,7 +31,6 @@ const MLUtils = {
     return a.map((row, i) => row.map((val, j) => operation(val, b[i][j])));
   },
 
-  // 激活函数注册表
   ActivationRegistry: {
     _activations: {
       relu: {
@@ -66,10 +56,12 @@ const MLUtils = {
           const n = row.length;
           const result = new Array(n).fill(0);
           for (let j = 0; j < n; j++) {
+            let sum = 0;
             for (let k = 0; k < n; k++) {
               const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
-              result[j] += rowGrad[k] * jacobian;
+              sum += rowGrad[k] * jacobian;
             }
+            result[j] = sum;
           }
           return result;
         }
@@ -103,15 +95,12 @@ const MLUtils = {
   },
 
   transpose(matrix) {
-    if (!matrix || !Array.isArray(matrix) || matrix.length === 0 || !Array.isArray(matrix[0])) return [];
+    if (!matrix || !matrix.length || !matrix[0]) return [];
     return matrix[0].map((_, col) => matrix.map(row => row[col]));
   },
 
   matMul(a, b) {
-    if (!a || !b || a.length === 0 || b.length === 0 || !a[0] || !b[0]) return [];
-    if (a[0].length !== b.length) {
-      return [];
-    }
+    if (!a.length || !b.length || !a[0] || !b[0] || a[0].length !== b.length) return [];
     const bT = this.transpose(b); 
     return a.map(row => 
       bT.map(col => 
@@ -129,10 +118,6 @@ const MLUtils = {
 
   matAdd(a, b) {
     return this.mapMatrices(a, b, (x, y) => x + y);
-  },
-
-  hadamard(a, b) {
-    return this.mapMatrices(a, b, (x, y) => x * y);
   },
 
   computeLossAndGradient(pred, target, lossType) {
@@ -157,14 +142,20 @@ const MLUtils = {
 
       case 'crossentropy': {
         const epsilon = 1e-7;
-        const ceLoss = -pred.reduce((sum, row, i) => 
-          sum + row.reduce((rowSum, val, j) => rowSum + target[i][j] * Math.log(val + epsilon), 0), 0
-        ) / batchSize;
-
-        const ceGrad = pred.map((row, i) => 
-          row.map((val, j) => val - target[i][j])
-        );
-        return { loss: ceLoss, grad: ceGrad };
+        let totalLoss = 0;
+        const ceGrad = pred.map((row, i) => {
+          let rowLoss = 0;
+          const rowGrad = row.map((val, j) => {
+            const t = target[i][j];
+            const safeVal = val + epsilon;
+            rowLoss -= t * Math.log(safeVal);
+            return -t / safeVal; 
+          });
+          totalLoss += rowLoss;
+          return rowGrad;
+        });
+        
+        return { loss: totalLoss / batchSize, grad: ceGrad };
       }
 
       default:
@@ -189,6 +180,7 @@ class EtudeTurboWarpMLCore {
         inputDim: null,
         outputDim: null,
         totalLayers: 0,
+        inputName: 'tensor_0', // 默认值
         created: Date.now()
       },
       parameters: {},
@@ -205,27 +197,22 @@ class EtudeTurboWarpMLCore {
   }
 
   addLinearLayer(args) {
-    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM, '输出维度', 'core');
+    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
     if (!outputDim) return;
-
-    const useBias = args.USE_BIAS === 'true';
 
     this._pendingLayers.push({
       type: 'linear',
       output_dim: outputDim,
       activation: args.ACTIVATION,
-      use_bias: useBias
+      use_bias: args.USE_BIAS === 'true'
     });
   }
 
   endModelDefinition(args) {
-    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM, '输入维度', 'core');
+    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
     const initStrategy = args.INIT || 'he';
 
-    if (!inputDim) return;
-    if (this._pendingLayers.length === 0) {
-      return;
-    }
+    if (!inputDim || this._pendingLayers.length === 0) return;
 
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
@@ -289,16 +276,21 @@ class EtudeTurboWarpMLCore {
   }
 
   forward(args) {
-    if (!MLUtils.Validation.ensureModel(this.globalState, 'core')) return '[]';
+    if (!MLUtils.Validation.ensureModel(this.globalState)) return '[]';
     
-    const input = MLUtils.Validation.parseMatrix(args.INPUT, 'core');
+    const input = MLUtils.Validation.parseMatrix(args.INPUT);
     if (!input) return '[]';
 
     const expectedDim = this.globalState.modelMeta.inputDim;
-    if (!MLUtils.Validation.matchDims(input[0].length, expectedDim, 'core')) return '[]';
+    if (!MLUtils.Validation.matchDims(input[0].length, expectedDim)) return '[]';
 
     this.globalState.forwardData = {};
-    this.globalState.forwardData['tensor_0'] = { preActivation: null, postActivation: input };
+    
+    let firstInputName = 'tensor_0';
+    if (this.globalState.computationGraph.forward.length > 0) {
+        firstInputName = this.globalState.computationGraph.forward[0].inputs[0];
+    }
+    this.globalState.forwardData[firstInputName] = { preActivation: null, postActivation: input };
     
     let currentTensor = input;
 
@@ -324,14 +316,20 @@ class EtudeTurboWarpMLCore {
     
     if (!layerParams) return input;
 
-    const weightT = MLUtils.transpose(layerParams.weight);
-    const output = MLUtils.matMul(input, weightT);
+    const output = input.map(inputRow => {
+        return layerParams.weight.map((weightRow, outIdx) => {
+            let sum = 0;
+            for (let k = 0; k < weightRow.length; k++) {
+                sum += inputRow[k] * weightRow[k];
+            }
+            if (layerParams.bias) {
+                sum += layerParams.bias[outIdx];
+            }
+            return sum;
+        });
+    });
 
-    if (!layerParams.bias) {
-        return output;
-    }
-
-    return output.map(row => row.map((val, j) => val + layerParams.bias[j]));
+    return output;
   }
 
   getModelStructure() {
@@ -353,9 +351,7 @@ class EtudeTurboWarpMLCore {
   loadModel(args) {
     try {
       const modelData = JSON.parse(args.JSON);
-      if (modelData.format !== 'etude-ml-model') {
-        return;
-      }
+      if (modelData.format !== 'etude-ml-model') return;
 
       const newState = this._createFreshState();
       newState.modelMeta = modelData.meta;
@@ -381,6 +377,7 @@ class EtudeTurboWarpMLCore {
 
       this.globalState = newState;
     } catch (e) {
+      console.warn("Load model failed", e);
     }
   }
 
@@ -400,20 +397,17 @@ class EtudeTurboWarpMLAutograd {
   }
 
   backward(args) {
-    if (!MLUtils.Validation.ensureModel(this.core.globalState, 'autograd')) return;
+    if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
     
-    const outputGrad = MLUtils.Validation.parseMatrix(args.GRAD, 'autograd');
+    const outputGrad = MLUtils.Validation.parseMatrix(args.GRAD);
     if (!outputGrad) return;
 
     const tape = [...this.core.globalState.computationGraph.forward].reverse();
     const gradBuffer = {};
 
-    const lastLayerOutDim = this.core.globalState.modelMeta.outputDim;
-    if (outputGrad[0].length !== lastLayerOutDim) {
-        return;
+    if (tape.length > 0) {
+        gradBuffer[tape[0].outputs[0]] = outputGrad;
     }
-
-    gradBuffer[tape[0].outputs[0]] = outputGrad;
 
     for (const node of tape) {
       if (node.type === 'linear') {
@@ -436,6 +430,7 @@ class EtudeTurboWarpMLAutograd {
     
     if (!inputData || !params || !params.weight) return;
     
+
     const weightGrad = MLUtils.matMul(MLUtils.transpose(outputGrad), inputData);
 
     let biasGrad = null;
@@ -480,10 +475,10 @@ class EtudeTurboWarpMLOptimizer {
   }
 
   stepSGD(args) {
-    if (!MLUtils.Validation.ensureModel(this.core.globalState, 'optimizer')) return;
+    if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
 
-    const pred = MLUtils.Validation.parseMatrix(args.PRED, 'optimizer');
-    const target = MLUtils.Validation.parseMatrix(args.TARGET, 'optimizer');
+    const pred = MLUtils.Validation.parseMatrix(args.PRED);
+    const target = MLUtils.Validation.parseMatrix(args.TARGET);
     if (!pred || !target) return;
 
     const lossType = args.LOSS || 'mse';
@@ -495,7 +490,6 @@ class EtudeTurboWarpMLOptimizer {
 
     this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
-    let updateCount = 0;
     this.core.globalState.layers.forEach(layer => {
       const layerId = layer.id;
       const layerGrad = this.core.globalState.gradients[layerId];
@@ -503,32 +497,32 @@ class EtudeTurboWarpMLOptimizer {
       
       if (!layerGrad || !layerParams) return;
 
-      layerParams.weight = MLUtils.mapMatrices(
-        layerParams.weight,
-        layerGrad.weight,
-        (w, g) => w - learningRate * g
-      );
-      
-      if (layerParams.bias && layerGrad.bias) {
-        layerParams.bias = layerParams.bias.map((b, i) => b - learningRate * layerGrad.bias[i]);
+      for(let i=0; i<layerParams.weight.length; i++) {
+          for(let j=0; j<layerParams.weight[i].length; j++) {
+              layerParams.weight[i][j] -= learningRate * layerGrad.weight[i][j];
+          }
       }
       
-      updateCount++;
+      if (layerParams.bias && layerGrad.bias) {
+        for(let i=0; i<layerParams.bias.length; i++) {
+            layerParams.bias[i] -= learningRate * layerGrad.bias[i];
+        }
+      }
     });
   }
 }
 
 class EtudeTurboWarpMLLinearAlgebra {
   matrixMultiplication(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A, 'matMul');
-    const b = MLUtils.Validation.parseMatrix(args.B, 'matMul');
+    const a = MLUtils.Validation.parseMatrix(args.A);
+    const b = MLUtils.Validation.parseMatrix(args.B);
     if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matMul(a, b));
   }
   
   matrixAddition(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A, 'matAdd');
-    const b = MLUtils.Validation.parseMatrix(args.B, 'matAdd');
+    const a = MLUtils.Validation.parseMatrix(args.A);
+    const b = MLUtils.Validation.parseMatrix(args.B);
     if (!a || !b) return '[]';
     return JSON.stringify(MLUtils.matAdd(a, b));
   }
@@ -571,7 +565,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.4',
+      version: '0.0.5', // Bump version
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
         {
