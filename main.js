@@ -565,9 +565,19 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.5', // Bump version
+      version: '0.0.4',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
+                {
+          opcode: 'endModelDefinition',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '构建并初始化模型 输入维度 [INPUT_DIM] 策略 [INIT]',
+          arguments: {
+            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 },
+            INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' }
+          },
+          disableMonitor: true
+        },
         {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
@@ -576,16 +586,6 @@ class EtudeTurboWarpML {
             OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
             ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' },
             USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
-          },
-          disableMonitor: true
-        },
-        {
-          opcode: 'endModelDefinition',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '构建并初始化模型 输入维度 [INPUT_DIM] 策略 [INIT]',
-          arguments: {
-            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 },
-            INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' }
           },
           disableMonitor: true
         },
