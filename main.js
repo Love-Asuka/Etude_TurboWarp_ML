@@ -71,7 +71,6 @@ const MLUtils = {
           const result = new Array(n).fill(0);
           for (let j = 0; j < n; j++) {
             for (let k = 0; k < n; k++) {
-
               const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
               result[j] += rowGrad[k] * jacobian;
             }
@@ -208,7 +207,7 @@ class EtudeTurboWarpMLCore {
   _generateGradientStructure(layer) {
     return {
       weight: Array(layer.output_dim).fill().map(() => Array(layer.input_dim).fill(0)),
-      bias: Array(layer.output_dim).fill(0)
+      bias: layer.use_bias ? Array(layer.output_dim).fill(0) : null
     };
   }
 
@@ -216,13 +215,16 @@ class EtudeTurboWarpMLCore {
     const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM, '输出维度', 'core');
     if (!outputDim) return;
 
+    const useBias = args.USE_BIAS === 'true';
+
     this._pendingLayers.push({
       type: 'linear',
       output_dim: outputDim,
-      activation: args.ACTIVATION
+      activation: args.ACTIVATION,
+      use_bias: useBias
     });
 
-    console.log(`[core] 层配置已添加: Out=${outputDim}, Act=${args.ACTIVATION}`);
+    console.log(`[core] 层配置已添加: Out=${outputDim}, Act=${args.ACTIVATION}, Bias=${useBias}`);
   }
 
   endModelDefinition(args) {
@@ -252,6 +254,7 @@ class EtudeTurboWarpMLCore {
         input_dim: currentInputDim,
         output_dim: layerConfig.output_dim,
         activation: layerConfig.activation,
+        use_bias: layerConfig.use_bias, 
         input_name: inputName,
         output_name: activationOutputName
       };
@@ -282,7 +285,7 @@ class EtudeTurboWarpMLCore {
 
       this.globalState.parameters[layerId] = {
         weight: Array(layerConfig.output_dim).fill().map(() => Array(currentInputDim).fill().map(generator)),
-        bias: Array(layerConfig.output_dim).fill(0)
+        bias: layerConfig.use_bias ? Array(layerConfig.output_dim).fill(0) : null
       };
 
       this.globalState.gradients[layerId] = this._generateGradientStructure(fullLayerConfig);
@@ -335,7 +338,11 @@ class EtudeTurboWarpMLCore {
 
     const weightT = MLUtils.transpose(layerParams.weight);
     const output = MLUtils.matMul(input, weightT);
-    
+
+    if (!layerParams.bias) {
+        return output;
+    }
+
     return output.map(row => row.map((val, j) => val + layerParams.bias[j]));
   }
 
@@ -375,8 +382,11 @@ class EtudeTurboWarpMLCore {
           const params = layerData.parameters;
           newState.layers.push(config);
           
-          if (params?.weight && params?.bias) {
-            newState.parameters[config.id] = { weight: params.weight, bias: params.bias };
+          if (params?.weight) {
+            newState.parameters[config.id] = { 
+                weight: params.weight, 
+                bias: params.bias !== undefined ? params.bias : null 
+            };
           }
           newState.gradients[config.id] = this._generateGradientStructure(config);
         });
@@ -430,7 +440,7 @@ class EtudeTurboWarpMLAutograd {
     }
   }
 
-_linearBackward(node, gradBuffer) {
+  _linearBackward(node, gradBuffer) {
     const inputName = node.inputs[0];
     const outputName = node.outputs[0];
     const outputGrad = gradBuffer[outputName];
@@ -438,15 +448,18 @@ _linearBackward(node, gradBuffer) {
 
     const layerId = node.layerId;
     const inputData = this.core.globalState.forwardData?.[inputName]?.postActivation;
-    const weight = this.core.globalState.parameters[layerId]?.weight;
+    const params = this.core.globalState.parameters[layerId];
     
-    if (!inputData || !weight) return;
+    if (!inputData || !params || !params.weight) return;
     
     const weightGrad = MLUtils.matMul(MLUtils.transpose(outputGrad), inputData);
 
-    const biasGrad = MLUtils.sumRows(outputGrad);
+    let biasGrad = null;
+    if (params.bias) {
+        biasGrad = MLUtils.sumRows(outputGrad);
+    }
 
-    const inputGrad = MLUtils.matMul(outputGrad, weight);
+    const inputGrad = MLUtils.matMul(outputGrad, params.weight);
 
     gradBuffer[inputName] = inputGrad;
     this.core.globalState.gradients[layerId] = { weight: weightGrad, bias: biasGrad };
@@ -507,13 +520,17 @@ class EtudeTurboWarpMLOptimizer {
       
       if (!layerGrad || !layerParams) return;
 
+      // 更新权重
       layerParams.weight = MLUtils.mapMatrices(
         layerParams.weight,
         layerGrad.weight,
         (w, g) => w - learningRate * g
       );
       
-      layerParams.bias = layerParams.bias.map((b, i) => b - learningRate * layerGrad.bias[i]);
+      // 更新偏置（如果存在）
+      if (layerParams.bias && layerGrad.bias) {
+        layerParams.bias = layerParams.bias.map((b, i) => b - learningRate * layerGrad.bias[i]);
+      }
       
       updateCount++;
     });
@@ -581,10 +598,11 @@ class EtudeTurboWarpML {
         {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
-          text: '添加线性层 输出维度 [OUTPUT_DIM] 激活函数 [ACTIVATION]',
+          text: '添加线性层 输出维度 [OUTPUT_DIM] 激活函数 [ACTIVATION] 使用偏置 [USE_BIAS]',
           arguments: {
             OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
-            ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' }
+            ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' },
+            USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
           },
           disableMonitor: true
         },
@@ -692,6 +710,13 @@ class EtudeTurboWarpML {
             { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' },
             { text: '全零', value: 'zeros' },
             { text: '全一', value: 'ones' }
+          ]
+        },
+        BOOL_MENU: {
+          acceptReporters: false,
+          items: [
+            { text: '是', value: 'true' },
+            { text: '否', value: 'false' }
           ]
         }
       }
