@@ -198,7 +198,7 @@ class EtudeTurboWarpMLCore {
     } else if (layer.type === 'layernorm') {
       return {
         weight: Array(layer.input_dim).fill(0), // Gamma
-        bias: Array(layer.input_dim).fill(0)    // Beta
+        bias: layer.use_bias ? Array(layer.input_dim).fill(0) : null // Beta
       };
     } else if (layer.type === 'rmsnorm') {
       return {
@@ -223,7 +223,8 @@ class EtudeTurboWarpMLCore {
 
   addLayerNorm(args) {
     this._pendingLayers.push({
-      type: 'layernorm'
+      type: 'layernorm',
+      use_bias: args.USE_BIAS === 'true'
     });
   }
 
@@ -311,7 +312,7 @@ class EtudeTurboWarpMLCore {
         });
         this.globalState.parameters[layerId] = {
             weight: Array(currentInputDim).fill(1), // Gamma
-            bias: Array(currentInputDim).fill(0)    // Beta
+            bias: layerConfig.use_bias ? Array(currentInputDim).fill(0) : null // Beta
         };
         // Dims don't change
 
@@ -403,8 +404,8 @@ class EtudeTurboWarpMLCore {
   _layerNormForward(node, input) {
     const layerId = node.layerId;
     const params = this.globalState.parameters[layerId];
-    const gamma = params.weight; // Vector
-    const beta = params.bias;    // Vector
+    const gamma = params.weight;
+    const beta = params.bias;   
     const epsilon = 1e-5;
 
     const cache = [];
@@ -418,7 +419,8 @@ class EtudeTurboWarpMLCore {
 
         return row.map((val, i) => {
             const normalized = (val - mean) * invStd;
-            return normalized * gamma[i] + beta[i];
+            const scaled = normalized * gamma[i];
+            return beta ? scaled + beta[i] : scaled;
         });
     });
 
@@ -607,12 +609,13 @@ class EtudeTurboWarpMLAutograd {
     const cache = fwdData.cache; // [{mean, invStd}, ...]
     const params = this.core.globalState.parameters[layerId];
     const gamma = params.weight; // Shape: [Dim]
+    const hasBias = !!params.bias;
     
     const N = x.length;     // Batch size
     const D = x[0].length;  // Dimension
 
     const dGamma = new Array(D).fill(0);
-    const dBeta = new Array(D).fill(0);
+    const dBeta = hasBias ? new Array(D).fill(0) : null;
     const dx = [];
 
     for (let i = 0; i < N; i++) {
@@ -624,8 +627,10 @@ class EtudeTurboWarpMLAutograd {
         const row_norm_x = row_x.map(val => (val - mean) * invStd);
         
         for (let j = 0; j < D; j++) {
-            dGamma[j] += row_dy[j] * row_norm_x[j]; // dL/dGamma
-            dBeta[j] += row_dy[j];                  // dL/dBeta
+            dGamma[j] += row_dy[j] * row_norm_x[j]; 
+            if (hasBias) {
+                dBeta[j] += row_dy[j];
+            }                  
         }
 
         const dl_dxhat = row_dy.map((val, j) => val * gamma[j]);
@@ -823,7 +828,10 @@ class EtudeTurboWarpML {
         {
           opcode: 'addLayerNorm',
           blockType: Scratch.BlockType.COMMAND,
-          text: '添加层归一化 (LayerNorm)',
+          text: '添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]',
+          arguments: {
+            USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
+          },
           disableMonitor: true
         },
         {
