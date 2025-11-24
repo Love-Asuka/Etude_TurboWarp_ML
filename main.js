@@ -247,15 +247,14 @@ class EtudeTurboWarpMLCore {
 
     this._pendingLayers.forEach((layerConfig, index) => {
       const inputName = index === 0 ? 'tensor_0' : `tensor_${index}`;
-      const outputName = `tensor_${index + 1}`; // Final output of this block
+      const outputName = `tensor_${index + 1}`;
       const layerId = `layer_${index}_${layerConfig.type}`;
 
-      // 统一的配置对象
       const fullLayerConfig = {
         id: layerId,
         type: layerConfig.type,
         input_dim: currentInputDim,
-        output_dim: layerConfig.type === 'linear' ? layerConfig.output_dim : currentInputDim, // Norm layers keep dim
+        output_dim: layerConfig.type === 'linear' ? layerConfig.output_dim : currentInputDim, 
         activation: layerConfig.activation || 'none',
         use_bias: layerConfig.use_bias,
         input_name: inputName,
@@ -264,12 +263,11 @@ class EtudeTurboWarpMLCore {
 
       this.globalState.layers.push(fullLayerConfig);
 
-      // 构建参数和计算图
       if (layerConfig.type === 'linear') {
         const linearOutputName = `linear_${index + 1}`;
         const finalOutputName = layerConfig.activation !== 'none' ? outputName : linearOutputName;
         
-        // Linear Op
+
         this.globalState.computationGraph.forward.push({
           id: `op_${index + 1}_lin`,
           type: 'linear',
@@ -278,7 +276,7 @@ class EtudeTurboWarpMLCore {
           layerId: layerId
         });
 
-        // Activation Op (if any)
+
         if (layerConfig.activation !== 'none') {
             this.globalState.computationGraph.forward.push({
                 id: `op_${index + 1}_act`,
@@ -311,10 +309,9 @@ class EtudeTurboWarpMLCore {
             layerId: layerId
         });
         this.globalState.parameters[layerId] = {
-            weight: Array(currentInputDim).fill(1), // Gamma
-            bias: layerConfig.use_bias ? Array(currentInputDim).fill(0) : null // Beta
+            weight: Array(currentInputDim).fill(1), 
+            bias: layerConfig.use_bias ? Array(currentInputDim).fill(0) : null 
         };
-        // Dims don't change
 
       } else if (layerConfig.type === 'rmsnorm') {
         this.globalState.computationGraph.forward.push({
@@ -325,7 +322,7 @@ class EtudeTurboWarpMLCore {
             layerId: layerId
         });
         this.globalState.parameters[layerId] = {
-            weight: Array(currentInputDim).fill(1), // Gamma
+            weight: Array(currentInputDim).fill(1), 
             bias: null
         };
       }
@@ -602,17 +599,17 @@ class EtudeTurboWarpMLAutograd {
   _layerNormBackward(node, gradBuffer) {
     const layerId = node.layerId;
     const outputName = node.outputs[0];
-    const dy = gradBuffer[outputName]; // Shape: [Batch, Dim]
+    const dy = gradBuffer[outputName]; 
     
     const fwdData = this.core.globalState.forwardData[outputName];
-    const x = fwdData.preActivation; // Input X
-    const cache = fwdData.cache; // [{mean, invStd}, ...]
+    const x = fwdData.preActivation;
+    const cache = fwdData.cache; 
     const params = this.core.globalState.parameters[layerId];
-    const gamma = params.weight; // Shape: [Dim]
+    const gamma = params.weight;
     const hasBias = !!params.bias;
     
-    const N = x.length;     // Batch size
-    const D = x[0].length;  // Dimension
+    const N = x.length;    
+    const D = x[0].length; 
 
     const dGamma = new Array(D).fill(0);
     const dBeta = hasBias ? new Array(D).fill(0) : null;
@@ -656,7 +653,7 @@ class EtudeTurboWarpMLAutograd {
     
     const fwdData = this.core.globalState.forwardData[outputName];
     const x = fwdData.preActivation;
-    const cache = fwdData.cache; // [{invRms}, ...]
+    const cache = fwdData.cache; 
     const params = this.core.globalState.parameters[layerId];
     const gamma = params.weight;
 
@@ -947,5 +944,4 @@ class EtudeTurboWarpML {
     };
   }
 }
-
 Scratch.extensions.register(new EtudeTurboWarpML());
