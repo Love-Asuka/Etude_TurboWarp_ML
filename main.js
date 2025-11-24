@@ -430,7 +430,7 @@ class EtudeTurboWarpMLAutograd {
     }
   }
 
-  _linearBackward(node, gradBuffer) {
+_linearBackward(node, gradBuffer) {
     const inputName = node.inputs[0];
     const outputName = node.outputs[0];
     const outputGrad = gradBuffer[outputName];
@@ -441,13 +441,12 @@ class EtudeTurboWarpMLAutograd {
     const weight = this.core.globalState.parameters[layerId]?.weight;
     
     if (!inputData || !weight) return;
-
-
+    
     const weightGrad = MLUtils.matMul(MLUtils.transpose(outputGrad), inputData);
 
     const biasGrad = MLUtils.sumRows(outputGrad);
 
-    const inputGrad = MLUtils.matMul(outputGrad, MLUtils.transpose(weight));
+    const inputGrad = MLUtils.matMul(outputGrad, weight);
 
     gradBuffer[inputName] = inputGrad;
     this.core.globalState.gradients[layerId] = { weight: weightGrad, bias: biasGrad };
