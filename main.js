@@ -357,7 +357,7 @@ class EtudeTurboWarpMLCore {
         outputVal = MLUtils.ActivationRegistry.apply(currentVal, node.activation_type);
         this.globalState.forwardData[outputName] = { preActivation: currentVal, postActivation: outputVal };
       } else if (node.type === 'layernorm' || node.type === 'rmsnorm') {
-        outputVal = this._normForward(node, currentVal); // 合并 Norm 前向逻辑
+        outputVal = this._normForward(node, currentVal); 
       }
       currentVal = outputVal;
     }
@@ -466,7 +466,6 @@ class EtudeTurboWarpMLAutograd {
     const graph = this.core.globalState.computationGraph;
     const gradMap = { [graph.forward[graph.forward.length - 1].outputs[0]]: outputGrad };
 
-    // 反向遍历图
     for (let i = graph.forward.length - 1; i >= 0; i--) {
       const node = graph.forward[i];
       const grad = gradMap[node.outputs[0]];
@@ -632,11 +631,10 @@ class EtudeTurboWarpMLOptimizer {
         const nextM = config.beta1 * m + (1 - config.beta1) * g;
         const nextV = config.beta2 * v + (1 - config.beta2) * (g * g);
         
-        return w; // 占位
+        return w; 
     };
 
     this._performOptimization(args, (w, g, mVal, vVal, row, col) => {
-        // 更新 m, v 的值
         const mNew = config.beta1 * mVal + (1 - config.beta1) * g;
         const vNew = config.beta2 * vVal + (1 - config.beta2) * (g * g);
         
