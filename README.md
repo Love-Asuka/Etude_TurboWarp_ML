@@ -16,7 +16,6 @@
 - Tanh
 - Sigmoid
 - Softmax
-- 无激活函数
 
 ### 支持的损失函数
 - 均方误差 (MSE)
