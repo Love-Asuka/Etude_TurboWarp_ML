@@ -569,8 +569,11 @@ class EtudeTurboWarpMLOptimizer {
     const target = MLUtils.Validation.parseMatrix(args.TARGET);
     if (!pred || !target) return;
 
+
     this.autograd.zeroGrad();
+
     const { grad } = MLUtils.computeLossAndGradient(pred, target, args.LOSS || 'mse');
+
     this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
     const optState = this.core.globalState.optimizerState;
@@ -583,7 +586,6 @@ class EtudeTurboWarpMLOptimizer {
       if (!params || !grads) return;
 
       if (!optState.m[pid]) optState.m[pid] = { weight: null, bias: null };
-
       if (!optState.v[pid]) optState.v[pid] = { weight: null, bias: null };
 
       this._updateParamTensor(params.weight, grads.weight, optState.m[pid], optState.v[pid], 'weight', updateFunction);
@@ -595,7 +597,6 @@ class EtudeTurboWarpMLOptimizer {
   }
 
   _updateParamTensor(pTensor, gTensor, mContainer, vContainer, key, updateFn) {
-
     if (!mContainer[key]) mContainer[key] = MLUtils.zeros(Array.isArray(pTensor[0]) ? [pTensor.length, pTensor[0].length] : [pTensor.length]);
     if (!vContainer[key]) vContainer[key] = MLUtils.zeros(Array.isArray(pTensor[0]) ? [pTensor.length, pTensor[0].length] : [pTensor.length]);
 
@@ -613,48 +614,20 @@ class EtudeTurboWarpMLOptimizer {
     });
   }
 
-  stepAdamW(args) {
-    const config = {
-      lr: parseFloat(args.LR) || 0.001,
-      beta1: parseFloat(args.BETA1) || 0.9,
-      beta2: parseFloat(args.BETA2) || 0.999,
-      eps: parseFloat(args.EPS) || 1e-8,
-      decay: parseFloat(args.DECAY) || 0.01
-    };
-    
-    const t = this.core.globalState.optimizerState.step;
-    const correction1 = 1 - Math.pow(config.beta1, t);
-    const correction2 = 1 - Math.pow(config.beta2, t);
-
-    const kernel = (w, g, m, v, i, j) => {
-
-        const nextM = config.beta1 * m + (1 - config.beta1) * g;
-        const nextV = config.beta2 * v + (1 - config.beta2) * (g * g);
-        
-        return w; 
-    };
-
-    this._performOptimization(args, (w, g, mVal, vVal, row, col) => {
-        const mNew = config.beta1 * mVal + (1 - config.beta1) * g;
-        const vNew = config.beta2 * vVal + (1 - config.beta2) * (g * g);
-        
-
-        return w;
-    });
-  }
-  
-
   _updateAdamW(pTensor, gTensor, mTensor, vTensor, config, t) {
       const c1 = 1 - Math.pow(config.beta1, t);
       const c2 = 1 - Math.pow(config.beta2, t);
       const is2D = Array.isArray(pTensor[0]);
 
       const update = (w, g, m, v) => {
-          const nm = config.beta1 * m + (1 - config.beta1) * g;
-          const nv = config.beta2 * v + (1 - config.beta2) * (g * g);
-          const mHat = nm / c1;
+          const nm = config.beta1 * m + (1 - config.beta1) * g;       
+          const nv = config.beta2 * v + (1 - config.beta2) * (g * g); 
+          
+          const mHat = nm / c1; 
           const vHat = nv / c2;
+          
           const nw = w - config.lr * ( (mHat / (Math.sqrt(vHat) + config.eps)) + config.decay * w );
+          
           return { w: nw, m: nm, v: nv };
       };
 
@@ -663,7 +636,7 @@ class EtudeTurboWarpMLOptimizer {
               for(let j=0; j<pTensor[i].length; j++) {
                   const res = update(pTensor[i][j], gTensor[i][j], mTensor[i][j], vTensor[i][j]);
                   pTensor[i][j] = res.w;
-                  mTensor[i][j] = res.m;
+                  mTensor[i][j] = res.m; 
                   vTensor[i][j] = res.v;
               }
           }
