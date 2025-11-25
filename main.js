@@ -197,12 +197,12 @@ class EtudeTurboWarpMLCore {
       };
     } else if (layer.type === 'layernorm') {
       return {
-        weight: Array(layer.input_dim).fill(0), // Gamma
-        bias: layer.use_bias ? Array(layer.input_dim).fill(0) : null // Beta
+        weight: Array(layer.input_dim).fill(0),
+        bias: layer.use_bias ? Array(layer.input_dim).fill(0) : null
       };
     } else if (layer.type === 'rmsnorm') {
       return {
-        weight: Array(layer.input_dim).fill(0), // Gamma
+        weight: Array(layer.input_dim).fill(0),
         bias: null
       };
     }
@@ -210,7 +210,7 @@ class EtudeTurboWarpMLCore {
   }
 
   addLinearLayer(args) {
-    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
+    const outputDim = MLUtils.Validation.validatePositiveInt(args.维度);
     if (!outputDim) return;
 
     this._pendingLayers.push({
@@ -235,10 +235,16 @@ class EtudeTurboWarpMLCore {
   }
 
   endModelDefinition(args) {
-    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
     const initStrategy = args.INIT || 'he';
 
-    if (!inputDim || this._pendingLayers.length === 0) return;
+    if (this._pendingLayers.length === 0) return;
+
+    // 找到第一个线性层作为输入层
+    const firstLinearIndex = this._pendingLayers.findIndex(layer => layer.type === 'linear');
+    if (firstLinearIndex === -1) return;
+
+    // 输入维度由第一个线性层的输出维度决定
+    const inputDim = this._pendingLayers[firstLinearIndex].output_dim;
 
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
@@ -250,11 +256,16 @@ class EtudeTurboWarpMLCore {
       const outputName = `tensor_${index + 1}`;
       const layerId = `layer_${index}_${layerConfig.type}`;
 
+      // 为norm层确定正确的维度
+      const actualOutputDim = (layerConfig.type === 'linear' && index !== firstLinearIndex) 
+        ? layerConfig.output_dim 
+        : currentInputDim;
+
       const fullLayerConfig = {
         id: layerId,
         type: layerConfig.type,
         input_dim: currentInputDim,
-        output_dim: layerConfig.type === 'linear' ? layerConfig.output_dim : currentInputDim, 
+        output_dim: actualOutputDim,
         activation: layerConfig.activation || 'none',
         use_bias: layerConfig.use_bias,
         input_name: inputName,
@@ -266,7 +277,6 @@ class EtudeTurboWarpMLCore {
       if (layerConfig.type === 'linear') {
         const linearOutputName = `linear_${index + 1}`;
         const finalOutputName = layerConfig.activation !== 'none' ? outputName : linearOutputName;
-        
 
         this.globalState.computationGraph.forward.push({
           id: `op_${index + 1}_lin`,
@@ -275,7 +285,6 @@ class EtudeTurboWarpMLCore {
           outputs: [linearOutputName],
           layerId: layerId
         });
-
 
         if (layerConfig.activation !== 'none') {
             this.globalState.computationGraph.forward.push({
@@ -289,16 +298,20 @@ class EtudeTurboWarpMLCore {
             const lastNode = this.globalState.computationGraph.forward[this.globalState.computationGraph.forward.length-1];
             lastNode.outputs[0] = outputName;
         }
+        
         const generator = MLUtils.Initializers[initStrategy] 
-          ? MLUtils.Initializers[initStrategy](currentInputDim, layerConfig.output_dim)
-          : MLUtils.Initializers.he(currentInputDim, layerConfig.output_dim);
+          ? MLUtils.Initializers[initStrategy](currentInputDim, actualOutputDim)
+          : MLUtils.Initializers.he(currentInputDim, actualOutputDim);
 
         this.globalState.parameters[layerId] = {
-          weight: Array(layerConfig.output_dim).fill().map(() => Array(currentInputDim).fill().map(generator)),
-          bias: layerConfig.use_bias ? Array(layerConfig.output_dim).fill(0) : null
+          weight: Array(actualOutputDim).fill().map(() => Array(currentInputDim).fill().map(generator)),
+          bias: layerConfig.use_bias ? Array(actualOutputDim).fill(0) : null
         };
         
-        currentInputDim = layerConfig.output_dim;
+        // 更新当前输入维度（除第一个输入层外）
+        if (index !== firstLinearIndex) {
+          currentInputDim = actualOutputDim;
+        }
 
       } else if (layerConfig.type === 'layernorm') {
         this.globalState.computationGraph.forward.push({
@@ -309,8 +322,8 @@ class EtudeTurboWarpMLCore {
             layerId: layerId
         });
         this.globalState.parameters[layerId] = {
-            weight: Array(currentInputDim).fill(1), 
-            bias: layerConfig.use_bias ? Array(currentInputDim).fill(0) : null 
+            weight: Array(currentInputDim).fill(1),
+            bias: layerConfig.use_bias ? Array(currentInputDim).fill(0) : null
         };
 
       } else if (layerConfig.type === 'rmsnorm') {
@@ -322,7 +335,7 @@ class EtudeTurboWarpMLCore {
             layerId: layerId
         });
         this.globalState.parameters[layerId] = {
-            weight: Array(currentInputDim).fill(1), 
+            weight: Array(currentInputDim).fill(1),
             bias: null
         };
       }
@@ -433,7 +446,7 @@ class EtudeTurboWarpMLCore {
   _rmsNormForward(node, input) {
     const layerId = node.layerId;
     const params = this.globalState.parameters[layerId];
-    const gamma = params.weight; // Vector
+    const gamma = params.weight;
     const epsilon = 1e-5;
 
     const cache = [];
@@ -537,7 +550,6 @@ class EtudeTurboWarpMLAutograd {
 
     for (const node of tape) {
       const grad = gradBuffer[node.outputs[0]];
-
       if (!grad) continue;
 
       if (node.type === 'linear') {
@@ -558,7 +570,6 @@ class EtudeTurboWarpMLAutograd {
     const outputGrad = gradBuffer[outputName];
     
     const layerId = node.layerId;
-    
     const fwdData = this.core.globalState.forwardData[outputName];
     if (!fwdData) return;
     
@@ -602,9 +613,13 @@ class EtudeTurboWarpMLAutograd {
     const dy = gradBuffer[outputName]; 
     
     const fwdData = this.core.globalState.forwardData[outputName];
+    if (!fwdData) return;
+    
     const x = fwdData.preActivation;
     const cache = fwdData.cache; 
     const params = this.core.globalState.parameters[layerId];
+    if (!params) return;
+    
     const gamma = params.weight;
     const hasBias = !!params.bias;
     
@@ -620,7 +635,6 @@ class EtudeTurboWarpMLAutograd {
         const row_x = x[i];
         const { mean, invStd } = cache[i];
         
-
         const row_norm_x = row_x.map(val => (val - mean) * invStd);
         
         for (let j = 0; j < D; j++) {
@@ -641,7 +655,6 @@ class EtudeTurboWarpMLAutograd {
         dx.push(row_dx);
     }
 
-    
     gradBuffer[node.inputs[0]] = dx;
     this.core.globalState.gradients[layerId] = { weight: dGamma, bias: dBeta };
   }
@@ -652,11 +665,14 @@ class EtudeTurboWarpMLAutograd {
     const dy = gradBuffer[outputName];
     
     const fwdData = this.core.globalState.forwardData[outputName];
+    if (!fwdData) return;
+    
     const x = fwdData.preActivation;
     const cache = fwdData.cache; 
     const params = this.core.globalState.parameters[layerId];
+    if (!params) return;
+    
     const gamma = params.weight;
-
     const N = x.length;
     const D = x[0].length;
 
@@ -668,12 +684,10 @@ class EtudeTurboWarpMLAutograd {
         const row_x = x[i];
         const { invRms } = cache[i];
 
-
         for (let j = 0; j < D; j++) {
             dGamma[j] += row_dy[j] * (row_x[j] * invRms);
         }
 
-        
         const g = row_dy.map((val, j) => val * gamma[j]);
         const sum_g_x = g.reduce((acc, val, j) => acc + val * row_x[j], 0);
         const factor = (invRms * invRms) / D * sum_g_x;
@@ -724,15 +738,16 @@ class EtudeTurboWarpMLOptimizer {
       
       if (!layerGrad || !layerParams) return;
 
+      const weightGrad = layerGrad.weight;
       if (Array.isArray(layerParams.weight[0])) {
           for(let i=0; i<layerParams.weight.length; i++) {
               for(let j=0; j<layerParams.weight[i].length; j++) {
-                  layerParams.weight[i][j] -= learningRate * layerGrad.weight[i][j];
+                  layerParams.weight[i][j] -= learningRate * weightGrad[i][j];
               }
           }
       } else {
            for(let i=0; i<layerParams.weight.length; i++) {
-              layerParams.weight[i] -= learningRate * layerGrad.weight[i];
+              layerParams.weight[i] -= learningRate * weightGrad[i];
            }
       }
 
@@ -798,15 +813,14 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.5',
+      version: '0.0.6',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
-                {
+        {
           opcode: 'endModelDefinition',
           blockType: Scratch.BlockType.COMMAND,
-          text: '构建并初始化模型 输入维度 [INPUT_DIM] 策略 [INIT]',
+          text: '构建并初始化模型 策略 [INIT]',
           arguments: {
-            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 2 },
             INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' }
           },
           disableMonitor: true
@@ -814,9 +828,9 @@ class EtudeTurboWarpML {
         {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
-          text: '添加线性层 输出维度 [OUTPUT_DIM] 激活函数 [ACTIVATION] 使用偏置 [USE_BIAS]',
+          text: '添加线性层 维度 [维度] 激活函数 [ACTIVATION] 使用偏置 [USE_BIAS]',
           arguments: {
-            OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
+            维度: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
             ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' },
             USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
           },
