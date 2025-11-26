@@ -231,10 +231,12 @@ class EtudeTurboWarpMLCore {
   }
 
   addLinearLayer(args) {
-    const outputDim = MLUtils.Validation.validatePositiveInt(args.维度);
-    if (!outputDim) return;
+    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
+    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
+    if (!inputDim || !outputDim) return;
     this._addPendingLayer({
       type: 'linear',
+      input_dim: inputDim,
       output_dim: outputDim,
       use_bias: args.USE_BIAS === 'true'
     });
@@ -264,7 +266,20 @@ class EtudeTurboWarpMLCore {
     const firstLinearIndex = this._pendingLayers.findIndex(l => l.type === 'linear');
     if (firstLinearIndex === -1) return;
 
-    const inputDim = this._pendingLayers[firstLinearIndex].output_dim; 
+    // 验证维度连续性
+    let prevOutputDim = null;
+    for (let i = 0; i < this._pendingLayers.length; i++) {
+      const layer = this._pendingLayers[i];
+      if (layer.type === 'linear') {
+        if (prevOutputDim !== null && layer.input_dim !== prevOutputDim) {
+          this.clearModel();
+          return;
+        }
+        prevOutputDim = layer.output_dim;
+      }
+    }
+
+    const inputDim = this._pendingLayers[firstLinearIndex].input_dim;
 
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
@@ -752,9 +767,10 @@ class EtudeTurboWarpML {
         {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
-          text: '添加线性层 维度 [维度] 使用偏置 [USE_BIAS]',
+          text: '添加线性层 输入维度 [INPUT_DIM] 输出维度 [OUTPUT_DIM] 使用偏置 [USE_BIAS]',
           arguments: {
-            维度: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
+            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
+            OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
             USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
           },
           disableMonitor: true
