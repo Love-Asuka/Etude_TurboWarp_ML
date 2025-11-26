@@ -173,7 +173,6 @@ class EtudeTurboWarpMLCore {
     const firstLin = this._pendingLayers.find(l => l.type === 'linear');
     if (!firstLin) return;
 
-    // 验证连续性
     let dimCheck = null;
     for (const l of this._pendingLayers) {
       if (l.type === 'linear') {
@@ -200,7 +199,6 @@ class EtudeTurboWarpMLCore {
       
       this.globalState.layers.push(fullCfg);
 
-      // 构建计算图与参数
       if (cfg.type === 'linear') {
         this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: 'linear', layerId: layId, inputs: [inName], outputs: [outName] });
         this.globalState.parameters[layId] = {
@@ -415,7 +413,6 @@ class EtudeTurboWarpMLOptimizer {
           if (!optState.m[pid]) optState.m[pid] = {};
           if (!optState.v[pid]) optState.v[pid] = {};
           
-          // Lazy init state
           if (!optState.m[pid][key]) {
             const shape = Array.isArray(params[key][0]) ? [params[key].length, params[key][0].length] : [params[key].length];
             optState.m[pid][key] = MLUtils.zeros(shape);
@@ -588,10 +585,12 @@ class EtudeTurboWarpML {
         { opcode: 'getModelStructure', blockType: Scratch.BlockType.REPORTER, text: '导出模型 (JSON)' },
         { opcode: 'clearModel', blockType: Scratch.BlockType.COMMAND, text: '清除当前模型' },
         { opcode: 'isModelDefined', blockType: Scratch.BlockType.BOOLEAN, text: '模型已加载?' },
+
         { blockType: Scratch.BlockType.LABEL, text: '推理与训练' },
         { opcode: 'forward', blockType: Scratch.BlockType.REPORTER, text: '推理 输入向量 [INPUT]', arguments: { INPUT: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1, 1]]' } } },
         { opcode: 'stepSGD', blockType: Scratch.BlockType.COMMAND, text: 'SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 } } },
         { opcode: 'stepAdamW', blockType: Scratch.BlockType.COMMAND, text: 'AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.001 }, DECAY: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 }, BETA1: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.9 }, BETA2: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.999 }, EPS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1e-8 } } },
+        
         { blockType: Scratch.BlockType.LABEL, text: '线性代数' },
         { opcode: 'matrixMultiplication', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] × [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } },
         { opcode: 'matrixAddition', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] + [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } }
