@@ -20,7 +20,6 @@ const MLUtils = {
     }
   },
 
-
   zeros(shape) {
     if (shape.length === 1) return new Array(shape[0]).fill(0);
     return new Array(shape[0]).fill(0).map(() => new Array(shape[1]).fill(0));
@@ -75,7 +74,6 @@ const MLUtils = {
   matAdd(a, b) {
     return this.mapMatrices(a, b, (x, y) => x + y);
   },
-
 
   ActivationRegistry: {
     _activations: {
@@ -238,8 +236,14 @@ class EtudeTurboWarpMLCore {
     this._addPendingLayer({
       type: 'linear',
       output_dim: outputDim,
-      activation: args.ACTIVATION,
       use_bias: args.USE_BIAS === 'true'
+    });
+  }
+
+  addActivationLayer(args) {
+    this._addPendingLayer({
+      type: 'activation',
+      activation: args.ACTIVATION
     });
   }
 
@@ -257,12 +261,10 @@ class EtudeTurboWarpMLCore {
   endModelDefinition(args) {
     if (this._pendingLayers.length === 0) return;
 
-
     const firstLinearIndex = this._pendingLayers.findIndex(l => l.type === 'linear');
     if (firstLinearIndex === -1) return;
 
     const inputDim = this._pendingLayers[firstLinearIndex].output_dim; 
-
 
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
@@ -273,9 +275,11 @@ class EtudeTurboWarpMLCore {
       const outputName = `tensor_${index + 1}`;
       const layerId = `layer_${index}_${layerConfig.type}`;
       
-      const actualOutputDim = (layerConfig.type === 'linear' && index !== firstLinearIndex) 
-        ? layerConfig.output_dim 
-        : currentInputDim;
+      let actualOutputDim = currentInputDim;
+
+      if (layerConfig.type === 'linear') {
+        actualOutputDim = layerConfig.output_dim;
+      }
 
       const fullConfig = {
         id: layerId,
@@ -289,21 +293,12 @@ class EtudeTurboWarpMLCore {
       };
 
       this.globalState.layers.push(fullConfig);
-      
+
       if (layerConfig.type === 'linear') {
-        const linearOutputName = layerConfig.activation !== 'none' ? `linear_${index + 1}` : outputName;
-        
         this.globalState.computationGraph.forward.push({
           id: `op_${index}_lin`, type: 'linear', layerId,
-          inputs: [inputName], outputs: [linearOutputName]
+          inputs: [inputName], outputs: [outputName]
         });
-
-        if (layerConfig.activation !== 'none') {
-          this.globalState.computationGraph.forward.push({
-            id: `op_${index}_act`, type: 'activation', activation_type: layerConfig.activation,
-            inputs: [linearOutputName], outputs: [outputName]
-          });
-        }
 
         const weights = MLUtils.Initializers.generate(args.INIT || 'he', currentInputDim, actualOutputDim);
         this.globalState.parameters[layerId] = {
@@ -311,7 +306,13 @@ class EtudeTurboWarpMLCore {
           bias: layerConfig.use_bias ? new Array(actualOutputDim).fill(0) : null
         };
 
-        if (index !== firstLinearIndex) currentInputDim = actualOutputDim;
+        currentInputDim = actualOutputDim;
+
+      } else if (layerConfig.type === 'activation') {
+        this.globalState.computationGraph.forward.push({
+          id: `op_${index}_act`, type: 'activation', activation_type: layerConfig.activation,
+          inputs: [inputName], outputs: [outputName]
+        });
 
       } else {
         const isRMS = layerConfig.type === 'rmsnorm';
@@ -413,7 +414,7 @@ class EtudeTurboWarpMLCore {
     if (!this.globalState.isModelDefined) return JSON.stringify({ error: '模型未定义' }, null, 2);
     return JSON.stringify({
       format: 'etude-ml-model',
-      version: '1.2',
+      version: '1.3', 
       meta: this.globalState.modelMeta,
       layers: this.globalState.layers.map(layer => ({
         config: layer,
@@ -568,7 +569,6 @@ class EtudeTurboWarpMLOptimizer {
     const pred = MLUtils.Validation.parseMatrix(args.PRED);
     const target = MLUtils.Validation.parseMatrix(args.TARGET);
     if (!pred || !target) return;
-
 
     this.autograd.zeroGrad();
 
@@ -739,7 +739,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.7',
+      version: '0.0.8',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
         {
@@ -752,11 +752,19 @@ class EtudeTurboWarpML {
         {
           opcode: 'addLinearLayer',
           blockType: Scratch.BlockType.COMMAND,
-          text: '添加线性层 维度 [维度] 激活函数 [ACTIVATION] 使用偏置 [USE_BIAS]',
+          text: '添加线性层 维度 [维度] 使用偏置 [USE_BIAS]',
           arguments: {
             维度: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
-            ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' },
             USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
+          },
+          disableMonitor: true
+        },
+        {
+          opcode: 'addActivationLayer',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '添加激活函数 [ACTIVATION]',
+          arguments: {
+            ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' }
           },
           disableMonitor: true
         },
@@ -863,8 +871,7 @@ class EtudeTurboWarpML {
             { text: 'ReLU', value: 'relu' },
             { text: 'Tanh', value: 'tanh' },
             { text: 'Sigmoid', value: 'sigmoid' },
-            { text: 'Softmax', value: 'softmax' },
-            { text: '无', value: 'none' }
+            { text: 'Softmax', value: 'softmax' }
           ]
         },
         LOSS_MENU: {

@@ -32,14 +32,16 @@
 使用以下积木块来定义神经网络模型的结构：
 
 ```scratch
-添加线性层 维度 [DIM] 激活函数 [ACTIVATION] 使用偏置 [USE_BIAS]
+添加线性层 维度 [DIM] 使用偏置 [USE_BIAS]
+添加激活层 类型 [ACTIVATION]
 添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]
 添加RMS归一化 (RMSNorm)
 构建并初始化模型 策略 [INIT]
 ```
 
 **说明：**
-- `添加线性层`：添加一个全连接层，可以指定输出维度、激活函数和是否使用偏置
+- `添加线性层`：添加一个全连接层，可以指定输出维度和是否使用偏置
+- `添加激活层`：添加一个激活函数层，可选择不同的激活函数类型
 - `添加层归一化`：添加LayerNorm层，有助于训练稳定性
 - `添加RMS归一化`：添加RMSNorm层，是LayerNorm的高效替代方案
 - `构建并初始化模型`：完成模型定义并初始化参数，必须在所有层添加完成后调用
@@ -80,18 +82,18 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
 - 各层参数（权重矩阵和偏置向量）
 - 计算图信息
 
-模型格式版本已更新至 1.1，支持 LayerNorm 和 RMSNorm 层。
+模型格式版本已更新至 1.3，支持独立的激活函数层、LayerNorm 层和 RMSNorm 层。
 
 示例结构：
 ```json
 {
   "format": "etude-ml-model",
-  "version": "1.1",
+  "version": "1.3",
   "meta": {
     "name": "Example-Model",
     "inputDim": 2,
     "outputDim": 1,
-    "totalLayers": 3,
+    "totalLayers": 4,
     "created": 1700000000000
   },
   "layers": [
@@ -101,7 +103,6 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
         "type": "linear",
         "input_dim": 2,
         "output_dim": 2,
-        "activation": "relu",
         "use_bias": true,
         "input_name": "tensor_0",
         "output_name": "tensor_1"
@@ -116,12 +117,23 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
     },
     {
       "config": {
-        "id": "layer_1_layernorm",
+        "id": "layer_1_activation",
+        "type": "activation",
+        "input_dim": 2,
+        "output_dim": 2,
+        "activation": "relu",
+        "input_name": "tensor_1",
+        "output_name": "tensor_2"
+      }
+    },
+    {
+      "config": {
+        "id": "layer_2_layernorm",
         "type": "layernorm",
         "input_dim": 2,
         "use_bias": true,
-        "input_name": "tensor_1",
-        "output_name": "tensor_2"
+        "input_name": "tensor_2",
+        "output_name": "tensor_3"
       },
       "parameters": {
         "weight": [1, 1],
@@ -140,10 +152,17 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
       },
       {
         "id": "op_2",
-        "type": "layernorm",
+        "type": "activation",
+        "activation_type": "relu",
         "inputs": ["linear_1"],
-        "outputs": ["tensor_2"],
-        "layerId": "layer_1_layernorm"
+        "outputs": ["tensor_2"]
+      },
+      {
+        "id": "op_3",
+        "type": "layernorm",
+        "inputs": ["tensor_2"],
+        "outputs": ["tensor_3"],
+        "layerId": "layer_2_layernorm"
       }
     ],
     "backward": []
@@ -166,7 +185,7 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
 ### 计算图
 系统通过构建计算图来管理前向和反向传播过程，确保梯度能够正确计算和传播。计算图包含前向传播路径和反向传播路径。
 
-计算图支持多种操作类型，包括线性变换、激活函数、LayerNorm和RMSNorm等，每种操作都有对应的前向和反向传播实现。
+计算图支持多种操作类型，包括线性变换、激活函数层、LayerNorm和RMSNorm等，每种操作都有对应的前向和反向传播实现。现在激活函数作为独立的层存在，使得网络结构更加灵活，可以更容易地在网络中插入或移除激活函数。
 
 ### 初始化策略
 支持多种参数初始化策略：
@@ -192,6 +211,10 @@ AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]
 1. 将此扩展加载到TurboWarp中
 2. 使用提供的积木块构建神经网络模型
 3. 进行模型推理或训练
+
+## 最新进展
+
+- 已完成激活函数独立成层的实现
 
 ## 开发计划
 
