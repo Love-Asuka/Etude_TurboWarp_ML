@@ -3,17 +3,10 @@ const MLUtils = {
     parseMatrix(str) {
       try {
         const parsed = JSON.parse(str);
-        if (Array.isArray(parsed) && Array.isArray(parsed[0])) return parsed;
-        return null;
-      } catch (e) {
-        return null;
-      }
+        return (Array.isArray(parsed) && Array.isArray(parsed[0])) ? parsed : null;
+      } catch { return null; }
     },
-
-    ensureModel(state) {
-      return state && state.isModelDefined;
-    },
-
+    ensureModel(state) { return state && state.isModelDefined; },
     validatePositiveInt(val) {
       const num = parseInt(val);
       return (isNaN(num) || num <= 0) ? null : num;
@@ -22,7 +15,7 @@ const MLUtils = {
 
   zeros(shape) {
     if (shape.length === 1) return new Array(shape[0]).fill(0);
-    return new Array(shape[0]).fill(0).map(() => new Array(shape[1]).fill(0));
+    return Array.from({ length: shape[0] }, () => new Array(shape[1]).fill(0));
   },
 
   tensorApply(target, source, fn, ...auxSources) {
@@ -33,158 +26,109 @@ const MLUtils = {
       for (let i = 0; i < target.length; i++) {
         for (let j = 0; j < target[i].length; j++) {
           const auxArgs = auxSources.map(aux => aux ? aux[i][j] : undefined);
-          target[i][j] = fn(target[i][j], source[i][j], ...auxArgs, i, j);
+          target[i][j] = fn(target[i][j], source[i][j], ...auxArgs);
         }
       }
     } else {
       for (let i = 0; i < target.length; i++) {
         const auxArgs = auxSources.map(aux => aux ? aux[i] : undefined);
-        target[i] = fn(target[i], source[i], ...auxArgs, i);
+        target[i] = fn(target[i], source[i], ...auxArgs);
       }
     }
   },
 
-  mapMatrices(a, b, operation) {
+  mapMatrices(a, b, op) {
     if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
-    return a.map((row, i) => row.map((val, j) => operation(val, b[i][j])));
+    return a.map((row, i) => row.map((val, j) => op(val, b[i][j])));
   },
 
-  transpose(matrix) {
-    if (!matrix || !matrix.length || !matrix[0]) return [];
-    return matrix[0].map((_, col) => matrix.map(row => row[col]));
+  transpose(m) {
+    if (!m?.length || !m[0]) return [];
+    return m[0].map((_, c) => m.map(r => r[c]));
   },
 
   matMul(a, b) {
-    if (!a.length || !b.length || !a[0] || !b[0] || a[0].length !== b.length) return [];
-    const bT = this.transpose(b); 
-    return a.map(row => 
-      bT.map(col => 
-        row.reduce((sum, val, k) => sum + val * col[k], 0)
-      )
-    );
+    if (!a.length || !b.length || a[0].length !== b.length) return [];
+    const bT = this.transpose(b);
+    return a.map(row => bT.map(col => row.reduce((s, v, k) => s + v * col[k], 0)));
   },
 
-  sumRows(matrix) {
-    if (!matrix || !matrix[0]) return [];
-    return matrix[0].map((_, col) => 
-      matrix.reduce((sum, row) => sum + row[col], 0)
-    );
+  sumRows(m) {
+    return m?.[0] ? m[0].map((_, c) => m.reduce((s, r) => s + r[c], 0)) : [];
   },
 
-  matAdd(a, b) {
-    return this.mapMatrices(a, b, (x, y) => x + y);
-  },
+  matAdd(a, b) { return this.mapMatrices(a, b, (x, y) => x + y); },
 
   ActivationRegistry: {
-    _activations: {
-      relu: {
-        forward: x => Math.max(0, x),
-        backward: (x, g) => (x > 0 ? g : 0)
-      },
-      tanh: {
-        forward: x => Math.tanh(x),
-        backward: (x, g) => (1 - x * x) * g
-      },
-      sigmoid: {
-        forward: x => 1 / (1 + Math.exp(-x)),
-        backward: (x, g) => (x * (1 - x)) * g
-      },
-      softmax: null 
+    _acts: {
+      relu: { f: x => Math.max(0, x), b: (x, g) => (x > 0 ? g : 0) },
+      tanh: { f: x => Math.tanh(x), b: (x, g) => (1 - x * x) * g },
+      sigmoid: { f: x => 1 / (1 + Math.exp(-x)), b: (x, g) => (x * (1 - x)) * g }
     },
 
-    apply(matrix, type) {
-      if (!matrix) return matrix;
+    apply(m, type) {
+      if (!m) return m;
       if (type === 'softmax') {
-        return matrix.map(row => {
-          const maxVal = Math.max(...row);
-          const exps = row.map(val => Math.exp(val - maxVal));
-          const sumExps = exps.reduce((a, b) => a + b, 0);
-          return exps.map(exp => exp / sumExps);
+        return m.map(row => {
+          const max = Math.max(...row);
+          const exps = row.map(v => Math.exp(v - max));
+          const sum = exps.reduce((a, b) => a + b, 0);
+          return exps.map(e => e / sum);
         });
       }
-
-      const act = this._activations[type];
-      if (!act) return matrix;
-      return matrix.map(row => row.map(act.forward));
+      const act = this._acts[type];
+      return act ? m.map(r => r.map(act.f)) : m;
     },
 
     derivative(activated, type, grad) {
       if (!activated || !grad) return grad;
-
       if (type === 'softmax') {
         return activated.map((row, i) => {
-          const rowGrad = grad[i];
-          const n = row.length;
-          const result = new Array(n).fill(0);
-          for (let j = 0; j < n; j++) {
+          const g = grad[i];
+          return row.map((_, j) => {
             let sum = 0;
-            for (let k = 0; k < n; k++) {
-              const jacobian = j === k ? row[k] * (1 - row[k]) : -row[j] * row[k];
-              sum += rowGrad[k] * jacobian;
+            for (let k = 0; k < row.length; k++) {
+              sum += g[k] * (j === k ? row[k] * (1 - row[k]) : -row[j] * row[k]);
             }
-            result[j] = sum;
-          }
-          return result;
+            return sum;
+          });
         });
       }
-
-      const act = this._activations[type];
-      if (!act) return grad;
-      return activated.map((row, i) => row.map((val, j) => act.backward(val, grad[i][j])));
+      const act = this._acts[type];
+      return act ? activated.map((r, i) => r.map((v, j) => act.b(v, grad[i][j]))) : grad;
     }
   },
 
   Initializers: {
     generate(strategy, inDim, outDim) {
-      let generator;
-      if (strategy === 'he') {
-        const scale = Math.sqrt(2.0 / inDim);
-        generator = () => (Math.random() - 0.5) * 2 * scale;
-      } else if (strategy === 'xavier') {
-        const limit = Math.sqrt(6 / (inDim + outDim));
-        generator = () => (Math.random() - 0.5) * 2 * limit;
-      } else if (strategy === 'ones') {
-        generator = () => 1;
-      } else { 
-        generator = () => 0;
-      }
-      return Array(outDim).fill().map(() => Array(inDim).fill().map(generator));
+      let fn;
+      if (strategy === 'he') fn = () => (Math.random() - 0.5) * 2 * Math.sqrt(2.0 / inDim);
+      else if (strategy === 'xavier') fn = () => (Math.random() - 0.5) * 2 * Math.sqrt(6 / (inDim + outDim));
+      else if (strategy === 'ones') fn = () => 1;
+      else fn = () => 0;
+      return Array.from({ length: outDim }, () => Array.from({ length: inDim }, fn));
     }
   },
 
   computeLossAndGradient(pred, target, lossType) {
-    if (!pred || !target || pred.length !== target.length) {
-      return { loss: 0, grad: [] };
-    }
-
-    const batchSize = pred.length;
+    if (!pred || !target || pred.length !== target.length) return { loss: 0, grad: [] };
+    const N = pred.length;
     let totalLoss = 0;
-    let grad = [];
-
-    if (lossType === 'crossentropy') {
-      const epsilon = 1e-7;
-      grad = pred.map((row, i) => {
-        let rowLoss = 0;
-        const rowGrad = row.map((val, j) => {
-          const t = target[i][j];
-          const safeVal = val + epsilon;
-          rowLoss -= t * Math.log(safeVal);
-          return -t / safeVal;
-        });
-        totalLoss += rowLoss;
-        return rowGrad;
-      });
-    } else { 
-      grad = pred.map((row, i) => 
-        row.map((val, j) => {
-          const diff = val - target[i][j];
-          totalLoss += diff * diff;
-          return 2 * diff / batchSize;
-        })
-      );
-    }
     
-    return { loss: totalLoss / batchSize, grad };
+    const grad = pred.map((row, i) => row.map((val, j) => {
+      const t = target[i][j];
+      if (lossType === 'crossentropy') {
+        const safeVal = val + 1e-7;
+        totalLoss -= t * Math.log(safeVal);
+        return -t / safeVal;
+      } else {
+        const diff = val - t;
+        totalLoss += diff * diff;
+        return 2 * diff / N;
+      }
+    }));
+
+    return { loss: totalLoss / N, grad };
   }
 };
 
@@ -196,157 +140,89 @@ class EtudeTurboWarpMLCore {
 
   _createFreshState() {
     return {
-      layers: [],
-      isModelDefined: false,
+      layers: [], isModelDefined: false,
       computationGraph: { forward: [], backward: [] },
-      modelMeta: {
-        name: 'Etude-Model',
-        inputDim: null,
-        outputDim: null,
-        totalLayers: 0,
-        inputName: 'tensor_0',
-        created: Date.now()
-      },
-      parameters: {}, 
-      gradients: {},  
-      forwardData: {},
+      modelMeta: { name: 'Etude-Model', inputDim: null, outputDim: null, totalLayers: 0, inputName: 'tensor_0', created: Date.now() },
+      parameters: {}, gradients: {}, forwardData: {},
       optimizerState: { step: 0, m: {}, v: {} }
     };
   }
 
   _generateZeroGrads(layer) {
-    const grads = {};
-    if (layer.type === 'linear') {
-      grads.weight = MLUtils.zeros([layer.output_dim, layer.input_dim]);
-      grads.bias = layer.use_bias ? MLUtils.zeros([layer.output_dim]) : null;
-    } else if (layer.type === 'layernorm' || layer.type === 'rmsnorm') {
-      grads.weight = MLUtils.zeros([layer.input_dim]);
-      grads.bias = (layer.use_bias) ? MLUtils.zeros([layer.input_dim]) : null;
-    }
-    return grads;
+    const isLinear = layer.type === 'linear';
+    return {
+      weight: MLUtils.zeros(isLinear ? [layer.output_dim, layer.input_dim] : [layer.input_dim]),
+      bias: layer.use_bias ? MLUtils.zeros(isLinear ? [layer.output_dim] : [layer.input_dim]) : null
+    };
   }
 
-  _addPendingLayer(config) {
-    this._pendingLayers.push(config);
-  }
+  _addPending(config) { this._pendingLayers.push(config); }
 
   addLinearLayer(args) {
-    const inputDim = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
-    const outputDim = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
-    if (!inputDim || !outputDim) return;
-    this._addPendingLayer({
-      type: 'linear',
-      input_dim: inputDim,
-      output_dim: outputDim,
-      use_bias: args.USE_BIAS === 'true'
-    });
+    const inD = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
+    const outD = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
+    if (inD && outD) this._addPending({ type: 'linear', input_dim: inD, output_dim: outD, use_bias: args.USE_BIAS === 'true' });
   }
 
-  addActivationLayer(args) {
-    this._addPendingLayer({
-      type: 'activation',
-      activation: args.ACTIVATION
-    });
-  }
-
-  addLayerNorm(args) {
-    this._addPendingLayer({
-      type: 'layernorm',
-      use_bias: args.USE_BIAS === 'true'
-    });
-  }
-
-  addRMSNorm(args) {
-    this._addPendingLayer({ type: 'rmsnorm' });
-  }
+  addActivationLayer(args) { this._addPending({ type: 'activation', activation: args.ACTIVATION }); }
+  addLayerNorm(args) { this._addPending({ type: 'layernorm', use_bias: args.USE_BIAS === 'true' }); }
+  addRMSNorm() { this._addPending({ type: 'rmsnorm' }); }
 
   endModelDefinition(args) {
-    if (this._pendingLayers.length === 0) return;
+    if (!this._pendingLayers.length) return;
+    const firstLin = this._pendingLayers.find(l => l.type === 'linear');
+    if (!firstLin) return;
 
-    const firstLinearIndex = this._pendingLayers.findIndex(l => l.type === 'linear');
-    if (firstLinearIndex === -1) return;
-
-    // 验证维度连续性
-    let prevOutputDim = null;
-    for (let i = 0; i < this._pendingLayers.length; i++) {
-      const layer = this._pendingLayers[i];
-      if (layer.type === 'linear') {
-        if (prevOutputDim !== null && layer.input_dim !== prevOutputDim) {
-          this.clearModel();
-          return;
-        }
-        prevOutputDim = layer.output_dim;
+    // 验证连续性
+    let dimCheck = null;
+    for (const l of this._pendingLayers) {
+      if (l.type === 'linear') {
+        if (dimCheck !== null && l.input_dim !== dimCheck) return this.clearModel();
+        dimCheck = l.output_dim;
       }
     }
 
-    const inputDim = this._pendingLayers[firstLinearIndex].input_dim;
-
+    const inputDim = firstLin.input_dim;
     this.globalState = this._createFreshState();
     this.globalState.modelMeta.inputDim = inputDim;
-    let currentInputDim = inputDim;
+    let currDim = inputDim;
 
-    this._pendingLayers.forEach((layerConfig, index) => {
-      const inputName = index === 0 ? 'tensor_0' : `tensor_${index}`;
-      const outputName = `tensor_${index + 1}`;
-      const layerId = `layer_${index}_${layerConfig.type}`;
+    this._pendingLayers.forEach((cfg, idx) => {
+      const inName = idx === 0 ? 'tensor_0' : `tensor_${idx}`;
+      const outName = `tensor_${idx + 1}`;
+      const layId = `layer_${idx}_${cfg.type}`;
+      let outDim = currDim;
       
-      let actualOutputDim = currentInputDim;
+      if (cfg.type === 'linear') outDim = cfg.output_dim;
 
-      if (layerConfig.type === 'linear') {
-        actualOutputDim = layerConfig.output_dim;
-      }
+      const fullCfg = { ...cfg, id: layId, input_dim: currDim, output_dim: outDim, input_name: inName, output_name: outName };
+      fullCfg.activation = cfg.activation || 'none';
+      
+      this.globalState.layers.push(fullCfg);
 
-      const fullConfig = {
-        id: layerId,
-        type: layerConfig.type,
-        input_dim: currentInputDim,
-        output_dim: actualOutputDim,
-        activation: layerConfig.activation || 'none',
-        use_bias: layerConfig.use_bias,
-        input_name: inputName,
-        output_name: outputName
-      };
-
-      this.globalState.layers.push(fullConfig);
-
-      if (layerConfig.type === 'linear') {
-        this.globalState.computationGraph.forward.push({
-          id: `op_${index}_lin`, type: 'linear', layerId,
-          inputs: [inputName], outputs: [outputName]
-        });
-
-        const weights = MLUtils.Initializers.generate(args.INIT || 'he', currentInputDim, actualOutputDim);
-        this.globalState.parameters[layerId] = {
-          weight: weights,
-          bias: layerConfig.use_bias ? new Array(actualOutputDim).fill(0) : null
+      // 构建计算图与参数
+      if (cfg.type === 'linear') {
+        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: 'linear', layerId: layId, inputs: [inName], outputs: [outName] });
+        this.globalState.parameters[layId] = {
+          weight: MLUtils.Initializers.generate(args.INIT || 'he', currDim, outDim),
+          bias: cfg.use_bias ? new Array(outDim).fill(0) : null
         };
-
-        currentInputDim = actualOutputDim;
-
-      } else if (layerConfig.type === 'activation') {
-        this.globalState.computationGraph.forward.push({
-          id: `op_${index}_act`, type: 'activation', activation_type: layerConfig.activation,
-          inputs: [inputName], outputs: [outputName]
-        });
-
+        currDim = outDim;
+      } else if (cfg.type === 'activation') {
+        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: 'activation', activation_type: cfg.activation, inputs: [inName], outputs: [outName] });
       } else {
-        const isRMS = layerConfig.type === 'rmsnorm';
-        this.globalState.computationGraph.forward.push({
-          id: `op_${index}_norm`, type: layerConfig.type, layerId,
-          inputs: [inputName], outputs: [outputName]
-        });
-
-        this.globalState.parameters[layerId] = {
-          weight: new Array(currentInputDim).fill(1),
-          bias: (layerConfig.use_bias && !isRMS) ? new Array(currentInputDim).fill(0) : null
+        const isRMS = cfg.type === 'rmsnorm';
+        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: cfg.type, layerId: layId, inputs: [inName], outputs: [outName] });
+        this.globalState.parameters[layId] = {
+          weight: new Array(currDim).fill(1),
+          bias: (cfg.use_bias && !isRMS) ? new Array(currDim).fill(0) : null
         };
       }
-
-      this.globalState.gradients[layerId] = this._generateZeroGrads(fullConfig);
+      this.globalState.gradients[layId] = this._generateZeroGrads(fullCfg);
     });
 
     this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
-    this.globalState.modelMeta.outputDim = currentInputDim;
+    this.globalState.modelMeta.outputDim = currDim;
     this.globalState.isModelDefined = true;
     this._pendingLayers = [];
   }
@@ -357,84 +233,55 @@ class EtudeTurboWarpMLCore {
     if (!input || input[0].length !== this.globalState.modelMeta.inputDim) return '[]';
 
     this.globalState.forwardData = {};
-    const firstInput = this.globalState.computationGraph.forward[0]?.inputs[0] || 'tensor_0';
+    const firstIn = this.globalState.computationGraph.forward[0]?.inputs[0] || 'tensor_0';
+    this.globalState.forwardData[firstIn] = { preActivation: null, postActivation: input };
     
-    this.globalState.forwardData[firstInput] = { preActivation: null, postActivation: input };
-    let currentVal = input;
-
+    let val = input;
     for (const node of this.globalState.computationGraph.forward) {
-      const outputName = node.outputs[0];
-      let outputVal;
-
+      let outVal;
       if (node.type === 'linear') {
-        outputVal = this._linearForward(node, currentVal);
-        this.globalState.forwardData[outputName] = { preActivation: currentVal, postActivation: outputVal };
+        const p = this.globalState.parameters[node.layerId];
+        outVal = val.map(r => p.weight.map((wR, i) => r.reduce((s, v, k) => s + v * wR[k], 0) + (p.bias ? p.bias[i] : 0)));
+        this.globalState.forwardData[node.outputs[0]] = { preActivation: val, postActivation: outVal };
       } else if (node.type === 'activation') {
-        outputVal = MLUtils.ActivationRegistry.apply(currentVal, node.activation_type);
-        this.globalState.forwardData[outputName] = { preActivation: currentVal, postActivation: outputVal };
-      } else if (node.type === 'layernorm' || node.type === 'rmsnorm') {
-        outputVal = this._normForward(node, currentVal); 
+        outVal = MLUtils.ActivationRegistry.apply(val, node.activation_type);
+        this.globalState.forwardData[node.outputs[0]] = { preActivation: val, postActivation: outVal };
+      } else {
+        outVal = this._normForward(node, val);
       }
-      currentVal = outputVal;
+      val = outVal;
     }
-
-    return JSON.stringify(currentVal);
-  }
-
-  _linearForward(node, input) {
-    const params = this.globalState.parameters[node.layerId];
-    return input.map(row => 
-      params.weight.map((wRow, idx) => {
-        const dot = row.reduce((sum, val, k) => sum + val * wRow[k], 0);
-        return params.bias ? dot + params.bias[idx] : dot;
-      })
-    );
+    return JSON.stringify(val);
   }
 
   _normForward(node, input) {
     const params = this.globalState.parameters[node.layerId];
     const isRMS = node.type === 'rmsnorm';
-    const epsilon = 1e-5;
     const cache = [];
-
     const output = input.map(row => {
-      const n = row.length;
-      let mean = 0, variance = 0, invFactor = 0;
-
+      let mean = 0, inv = 0;
       if (isRMS) {
-        const meanSquare = row.reduce((a, b) => a + b * b, 0) / n;
-        invFactor = 1 / Math.sqrt(meanSquare + epsilon);
-        cache.push({ invRms: invFactor });
+        inv = 1 / Math.sqrt(row.reduce((a, b) => a + b * b, 0) / row.length + 1e-5);
+        cache.push({ inv });
       } else {
-        mean = row.reduce((a, b) => a + b, 0) / n;
-        variance = row.reduce((a, b) => a + (b - mean) ** 2, 0) / n;
-        invFactor = 1 / Math.sqrt(variance + epsilon);
-        cache.push({ mean, invStd: invFactor });
+        mean = row.reduce((a, b) => a + b, 0) / row.length;
+        inv = 1 / Math.sqrt(row.reduce((a, b) => a + (b - mean) ** 2, 0) / row.length + 1e-5);
+        cache.push({ mean, inv });
       }
-
-      return row.map((val, i) => {
-        const normalized = isRMS ? val * invFactor : (val - mean) * invFactor;
-        const scaled = normalized * params.weight[i];
-        return (params.bias) ? scaled + params.bias[i] : scaled;
+      return row.map((v, i) => {
+        const norm = isRMS ? v * inv : (v - mean) * inv;
+        return norm * params.weight[i] + (params.bias ? params.bias[i] : 0);
       });
     });
-
-    this.globalState.forwardData[node.outputs[0]] = {
-      preActivation: input, postActivation: output, cache
-    };
+    this.globalState.forwardData[node.outputs[0]] = { preActivation: input, postActivation: output, cache };
     return output;
   }
 
   getModelStructure() {
-    if (!this.globalState.isModelDefined) return JSON.stringify({ error: '模型未定义' }, null, 2);
+    if (!this.globalState.isModelDefined) return JSON.stringify({ error: 'Model not defined' });
     return JSON.stringify({
-      format: 'etude-ml-model',
-      version: '1.3', 
-      meta: this.globalState.modelMeta,
-      layers: this.globalState.layers.map(layer => ({
-        config: layer,
-        parameters: this.globalState.parameters[layer.id]
-      })),
+      format: 'etude-ml-model-1.3', meta: this.globalState.modelMeta,
+      layers: this.globalState.layers.map(l => ({ config: l, parameters: this.globalState.parameters[l.id] })),
       computation_graph: this.globalState.computationGraph
     });
   }
@@ -442,23 +289,17 @@ class EtudeTurboWarpMLCore {
   loadModel(args) {
     try {
       const data = JSON.parse(args.JSON);
-      if (!data.format?.startsWith('etude-ml-model')) return;
-
-      const newState = this._createFreshState();
-      newState.modelMeta = data.meta;
-      newState.computationGraph = data.computation_graph;
-      newState.isModelDefined = true;
-
+      if (!data.format?.startsWith('etude-ml')) return;
+      this.clearModel();
+      this.globalState.modelMeta = data.meta;
+      this.globalState.computationGraph = data.computation_graph;
+      this.globalState.isModelDefined = true;
       (data.layers || []).forEach(({ config, parameters }) => {
-        newState.layers.push(config);
-        if (parameters) newState.parameters[config.id] = parameters;
-        newState.gradients[config.id] = this._generateZeroGrads(config);
+        this.globalState.layers.push(config);
+        if (parameters) this.globalState.parameters[config.id] = parameters;
+        this.globalState.gradients[config.id] = this._generateZeroGrads(config);
       });
-
-      this.globalState = newState;
-    } catch (e) {
-      console.warn("Load failed", e);
-    }
+    } catch (e) { console.warn("Load failed", e); }
   }
 
   clearModel() { this.globalState = this._createFreshState(); this._pendingLayers = []; }
@@ -469,105 +310,73 @@ class EtudeTurboWarpMLAutograd {
   constructor(core) { this.core = core; }
 
   zeroGrad() {
-    this.core.globalState.layers.forEach(layer => {
-      this.core.globalState.gradients[layer.id] = this.core._generateZeroGrads(layer);
-    });
+    this.core.globalState.layers.forEach(l => this.core.globalState.gradients[l.id] = this.core._generateZeroGrads(l));
   }
 
   backward(args) {
     if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
-    const outputGrad = MLUtils.Validation.parseMatrix(args.GRAD);
-    if (!outputGrad) return;
+    const gradIn = MLUtils.Validation.parseMatrix(args.GRAD);
+    if (!gradIn) return;
 
     const graph = this.core.globalState.computationGraph;
-    const gradMap = { [graph.forward[graph.forward.length - 1].outputs[0]]: outputGrad };
+    const gradMap = { [graph.forward.at(-1).outputs[0]]: gradIn };
 
     for (let i = graph.forward.length - 1; i >= 0; i--) {
       const node = graph.forward[i];
-      const grad = gradMap[node.outputs[0]];
-      
-      if (!grad) continue;
-      
-      if (node.type === 'linear') this._linearBackward(node, grad, gradMap);
-      else if (node.type === 'activation') this._activationBackward(node, grad, gradMap);
-      else if (node.type === 'layernorm') this._normBackward(node, grad, gradMap, false);
-      else if (node.type === 'rmsnorm') this._normBackward(node, grad, gradMap, true);
+      const dy = gradMap[node.outputs[0]];
+      if (!dy) continue;
+
+      if (node.type === 'linear') {
+        const fwd = this.core.globalState.forwardData[node.outputs[0]];
+        const p = this.core.globalState.parameters[node.layerId];
+        gradMap[node.inputs[0]] = MLUtils.matMul(dy, p.weight);
+        this.core.globalState.gradients[node.layerId] = {
+          weight: MLUtils.matMul(MLUtils.transpose(dy), fwd.preActivation),
+          bias: p.bias ? MLUtils.sumRows(dy) : null
+        };
+      } else if (node.type === 'activation') {
+        const fwd = this.core.globalState.forwardData[node.outputs[0]];
+        gradMap[node.inputs[0]] = MLUtils.ActivationRegistry.derivative(fwd.postActivation, node.activation_type, dy);
+      } else if (node.type.includes('norm')) {
+        this._normBackward(node, dy, gradMap, node.type === 'rmsnorm');
+      }
     }
-  }
-
-  _linearBackward(node, outputGrad, gradMap) {
-    const fwd = this.core.globalState.forwardData[node.outputs[0]];
-    const params = this.core.globalState.parameters[node.layerId];
-    if (!fwd || !params) return;
-
-    const input = fwd.preActivation;
-
-    const dW = MLUtils.matMul(MLUtils.transpose(outputGrad), input);
-
-    const dX = MLUtils.matMul(outputGrad, params.weight);
-    
-    gradMap[node.inputs[0]] = dX;
-    
-    this.core.globalState.gradients[node.layerId] = {
-      weight: dW,
-      bias: params.bias ? MLUtils.sumRows(outputGrad) : null
-    };
-  }
-
-  _activationBackward(node, grad, gradMap) {
-    const fwd = this.core.globalState.forwardData[node.outputs[0]];
-    const dX = MLUtils.ActivationRegistry.derivative(fwd.postActivation, node.activation_type, grad);
-    gradMap[node.inputs[0]] = dX;
   }
 
   _normBackward(node, dy, gradMap, isRMS) {
-    const fwd = this.core.globalState.forwardData[node.outputs[0]];
-    const params = this.core.globalState.parameters[node.layerId];
-    if (!fwd || !params) return;
-
-    const x = fwd.preActivation;
-    const cache = fwd.cache;
-    const gamma = params.weight;
-    const N = x.length;
-    const D = x[0].length;
-
+    const { preActivation: x, cache } = this.core.globalState.forwardData[node.outputs[0]];
+    const { weight: gamma, bias: beta } = this.core.globalState.parameters[node.layerId];
+    const [N, D] = [x.length, x[0].length];
+    
     const dGamma = new Array(D).fill(0);
-    const dBeta = params.bias ? new Array(D).fill(0) : null;
+    const dBeta = beta ? new Array(D).fill(0) : null;
     const dx = [];
 
     for (let i = 0; i < N; i++) {
-      const r_dy = dy[i];
+      const { inv, mean } = cache[i];
       const r_x = x[i];
-      const c = cache[i];
-      
-      const invFactor = isRMS ? c.invRms : c.invStd;
-      const r_norm = r_x.map((val, k) => isRMS 
-        ? val * invFactor 
-        : (val - c.mean) * invFactor
-      );
+      const r_dy = dy[i];
+      const x_hat = r_x.map(v => (v - (isRMS ? 0 : mean)) * inv);
 
       for (let j = 0; j < D; j++) {
-        dGamma[j] += r_dy[j] * r_norm[j];
-        if (dBeta) dBeta[j] += r_dy[j];
+        dGamma[j] += r_dy[j] * x_hat[j];
+        if (beta) dBeta[j] += r_dy[j];
       }
 
-      const dl_dxhat = r_dy.map((val, j) => val * gamma[j]);
+      const dldx_hat = r_dy.map((v, j) => v * gamma[j]);
       
       let row_dx;
       if (isRMS) {
-        const sum_g_x = dl_dxhat.reduce((acc, val, j) => acc + val * r_x[j], 0);
-        const factor = (invFactor * invFactor) / D * sum_g_x;
-        row_dx = dl_dxhat.map((val, j) => invFactor * (val - r_x[j] * factor));
+        const sum = dldx_hat.reduce((a, v, j) => a + v * r_x[j], 0);
+        const fac = (inv * inv) / D * sum;
+        row_dx = dldx_hat.map((v, j) => inv * (v - r_x[j] * fac));
       } else {
-        const sum_dl_dxhat_xhat = dl_dxhat.reduce((acc, val, j) => acc + val * r_norm[j], 0);
-        const sum_dl_dxhat = dl_dxhat.reduce((acc, val) => acc + val, 0);
-        row_dx = dl_dxhat.map((val, j) => 
-          (invFactor / D) * (D * val - sum_dl_dxhat - r_norm[j] * sum_dl_dxhat_xhat)
-        );
+        const sum1 = dldx_hat.reduce((a, b) => a + b, 0);
+        const sum2 = dldx_hat.reduce((a, v, j) => a + v * x_hat[j], 0);
+        row_dx = dldx_hat.map((v, j) => (inv / D) * (D * v - sum1 - x_hat[j] * sum2));
       }
       dx.push(row_dx);
     }
-
     gradMap[node.inputs[0]] = dx;
     this.core.globalState.gradients[node.layerId] = { weight: dGamma, bias: dBeta };
   }
@@ -579,16 +388,14 @@ class EtudeTurboWarpMLOptimizer {
     this.autograd = autograd;
   }
 
-  _performOptimization(args, updateFunction) {
+  _performOptimization(args, updateKernel, needsState = false) {
     if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
     const pred = MLUtils.Validation.parseMatrix(args.PRED);
     const target = MLUtils.Validation.parseMatrix(args.TARGET);
     if (!pred || !target) return;
 
     this.autograd.zeroGrad();
-
     const { grad } = MLUtils.computeLossAndGradient(pred, target, args.LOSS || 'mse');
-
     this.autograd.backward({ GRAD: JSON.stringify(grad) });
 
     const optState = this.core.globalState.optimizerState;
@@ -600,80 +407,64 @@ class EtudeTurboWarpMLOptimizer {
       const grads = this.core.globalState.gradients[pid];
       if (!params || !grads) return;
 
-      if (!optState.m[pid]) optState.m[pid] = { weight: null, bias: null };
-      if (!optState.v[pid]) optState.v[pid] = { weight: null, bias: null };
+      const applyUpdate = (key) => {
+        if (!params[key]) return;
+        
+        let m = null, v = null;
+        if (needsState) {
+          if (!optState.m[pid]) optState.m[pid] = {};
+          if (!optState.v[pid]) optState.v[pid] = {};
+          
+          // Lazy init state
+          if (!optState.m[pid][key]) {
+            const shape = Array.isArray(params[key][0]) ? [params[key].length, params[key][0].length] : [params[key].length];
+            optState.m[pid][key] = MLUtils.zeros(shape);
+            optState.v[pid][key] = MLUtils.zeros(shape);
+          }
+          m = optState.m[pid][key];
+          v = optState.v[pid][key];
+        }
 
-      this._updateParamTensor(params.weight, grads.weight, optState.m[pid], optState.v[pid], 'weight', updateFunction);
-      
-      if (params.bias) {
-        this._updateParamTensor(params.bias, grads.bias, optState.m[pid], optState.v[pid], 'bias', updateFunction);
-      }
+        MLUtils.tensorApply(params[key], grads[key], updateKernel, m, v);
+      };
+
+      applyUpdate('weight');
+      applyUpdate('bias');
     });
-  }
-
-  _updateParamTensor(pTensor, gTensor, mContainer, vContainer, key, updateFn) {
-    if (!mContainer[key]) mContainer[key] = MLUtils.zeros(Array.isArray(pTensor[0]) ? [pTensor.length, pTensor[0].length] : [pTensor.length]);
-    if (!vContainer[key]) vContainer[key] = MLUtils.zeros(Array.isArray(pTensor[0]) ? [pTensor.length, pTensor[0].length] : [pTensor.length]);
-
-    MLUtils.tensorApply(
-      pTensor, gTensor, 
-      updateFn, 
-      mContainer[key], vContainer[key]
-    );
   }
 
   stepSGD(args) {
     const lr = parseFloat(args.LR) || 0.01;
-    this._performOptimization(args, (param, grad) => {
-      return param - lr * grad;
-    });
-  }
-
-  _updateAdamW(pTensor, gTensor, mTensor, vTensor, config, t) {
-      const c1 = 1 - Math.pow(config.beta1, t);
-      const c2 = 1 - Math.pow(config.beta2, t);
-      const is2D = Array.isArray(pTensor[0]);
-
-      const update = (w, g, m, v) => {
-          const nm = config.beta1 * m + (1 - config.beta1) * g;       
-          const nv = config.beta2 * v + (1 - config.beta2) * (g * g); 
-          
-          const mHat = nm / c1; 
-          const vHat = nv / c2;
-          
-          const nw = w - config.lr * ( (mHat / (Math.sqrt(vHat) + config.eps)) + config.decay * w );
-          
-          return { w: nw, m: nm, v: nv };
-      };
-
-      if (is2D) {
-          for(let i=0; i<pTensor.length; i++) {
-              for(let j=0; j<pTensor[i].length; j++) {
-                  const res = update(pTensor[i][j], gTensor[i][j], mTensor[i][j], vTensor[i][j]);
-                  pTensor[i][j] = res.w;
-                  mTensor[i][j] = res.m; 
-                  vTensor[i][j] = res.v;
-              }
-          }
-      } else {
-          for(let i=0; i<pTensor.length; i++) {
-              const res = update(pTensor[i], gTensor[i], mTensor[i], vTensor[i]);
-              pTensor[i] = res.w;
-              mTensor[i] = res.m;
-              vTensor[i] = res.v;
-          }
-      }
+    this._performOptimization(args, (w, g) => w - lr * g, false);
   }
 
   stepAdamW(args) {
-    const config = {
-        lr: parseFloat(args.LR) || 0.001,
-        beta1: parseFloat(args.BETA1) || 0.9,
-        beta2: parseFloat(args.BETA2) || 0.999,
-        eps: parseFloat(args.EPS) || 1e-8,
-        decay: parseFloat(args.DECAY) || 0.01
+    const conf = {
+      lr: parseFloat(args.LR) || 0.001,
+      b1: parseFloat(args.BETA1) || 0.9,
+      b2: parseFloat(args.BETA2) || 0.999,
+      eps: parseFloat(args.EPS) || 1e-8,
+      decay: parseFloat(args.DECAY) || 0.01
     };
+    
+    const t = this.core.globalState.optimizerState.step + 1; 
+    const c1 = 1 - Math.pow(conf.b1, t);
+    const c2 = 1 - Math.pow(conf.b2, t);
 
+
+    const kernel = (w, g, m, v) => {
+
+      const nm = conf.b1 * m + (1 - conf.b1) * g;
+      const nv = conf.b2 * v + (1 - conf.b2) * g * g;
+      return w; 
+    };
+    
+
+    this._performOptimization(args, null, true);
+  }
+  
+
+  _performOptimization(args, simpleKernel, needsState = false) {
     if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
     const pred = MLUtils.Validation.parseMatrix(args.PRED);
     const target = MLUtils.Validation.parseMatrix(args.TARGET);
@@ -686,30 +477,70 @@ class EtudeTurboWarpMLOptimizer {
     const optState = this.core.globalState.optimizerState;
     optState.step++;
 
-    this.core.globalState.layers.forEach(layer => {
-        const pid = layer.id;
-        const params = this.core.globalState.parameters[pid];
-        const grads = this.core.globalState.gradients[pid];
-        if (!params || !grads) return;
+    let adamConf = null;
+    if (needsState && !simpleKernel) {
+        const t = optState.step;
+        adamConf = {
+            lr: parseFloat(args.LR) || 0.001,
+            b1: parseFloat(args.BETA1) || 0.9,
+            b2: parseFloat(args.BETA2) || 0.999,
+            eps: parseFloat(args.EPS) || 1e-8,
+            decay: parseFloat(args.DECAY) || 0.01,
+            c1: 1 - Math.pow(parseFloat(args.BETA1)||0.9, t),
+            c2: 1 - Math.pow(parseFloat(args.BETA2)||0.999, t)
+        };
+    }
 
-        if (!optState.m[pid]) optState.m[pid] = { weight: null, bias: null };
-        if (!optState.v[pid]) optState.v[pid] = { weight: null, bias: null };
+    this.core.globalState.layers.forEach(layer => {
+      const pid = layer.id;
+      const params = this.core.globalState.parameters[pid];
+      const grads = this.core.globalState.gradients[pid];
+      if (!params) return;
+
+      ['weight', 'bias'].forEach(key => {
+        if (!params[key]) return;
+        const pT = params[key];
+        const gT = grads[key];
         
-        const initAux = (p, key) => {
+        if (simpleKernel) {
+
+             MLUtils.tensorApply(pT, gT, simpleKernel);
+        } else {
+
+             if (!optState.m[pid]) optState.m[pid] = {};
+             if (!optState.v[pid]) optState.v[pid] = {};
              if (!optState.m[pid][key]) {
-                 const shape = Array.isArray(p[0]) ? [p.length, p[0].length] : [p.length];
+                 const shape = Array.isArray(pT[0]) ? [pT.length, pT[0].length] : [pT.length];
                  optState.m[pid][key] = MLUtils.zeros(shape);
                  optState.v[pid][key] = MLUtils.zeros(shape);
              }
-        };
+             const mT = optState.m[pid][key];
+             const vT = optState.v[pid][key];
+             
+             const update = (w, g, m, v) => {
+                 const nm = adamConf.b1 * m + (1 - adamConf.b1) * g;
+                 const nv = adamConf.b2 * v + (1 - adamConf.b2) * g * g;
+                 const mHat = nm / adamConf.c1;
+                 const vHat = nv / adamConf.c2;
+                 const nw = w - adamConf.lr * ((mHat / (Math.sqrt(vHat) + adamConf.eps)) + adamConf.decay * w);
+                 return { w: nw, m: nm, v: nv };
+             };
 
-        initAux(params.weight, 'weight');
-        this._updateAdamW(params.weight, grads.weight, optState.m[pid].weight, optState.v[pid].weight, config, optState.step);
-
-        if (params.bias) {
-            initAux(params.bias, 'bias');
-            this._updateAdamW(params.bias, grads.bias, optState.m[pid].bias, optState.v[pid].bias, config, optState.step);
+             if (Array.isArray(pT[0])) { // 2D
+                 for(let i=0; i<pT.length; i++) {
+                     for(let j=0; j<pT[i].length; j++) {
+                         const res = update(pT[i][j], gT[i][j], mT[i][j], vT[i][j]);
+                         pT[i][j] = res.w; mT[i][j] = res.m; vT[i][j] = res.v;
+                     }
+                 }
+             } else { // 1D
+                 for(let i=0; i<pT.length; i++) {
+                     const res = update(pT[i], gT[i], mT[i], vT[i]);
+                     pT[i] = res.w; mT[i] = res.m; vT[i] = res.v;
+                 }
+             }
         }
+      });
     });
   }
 }
@@ -718,13 +549,12 @@ class EtudeTurboWarpMLLinearAlgebra {
   matrixMultiplication(args) {
     const a = MLUtils.Validation.parseMatrix(args.A);
     const b = MLUtils.Validation.parseMatrix(args.B);
-    return JSON.stringify(a && b ? MLUtils.matMul(a, b) : []);
+    return JSON.stringify(MLUtils.matMul(a, b));
   }
-  
   matrixAddition(args) {
     const a = MLUtils.Validation.parseMatrix(args.A);
     const b = MLUtils.Validation.parseMatrix(args.B);
-    return JSON.stringify(a && b ? MLUtils.matAdd(a, b) : []);
+    return JSON.stringify(MLUtils.matAdd(a, b));
   }
 }
 
@@ -734,179 +564,43 @@ class EtudeTurboWarpML {
     this.autograd = new EtudeTurboWarpMLAutograd(this.core);
     this.optimizer = new EtudeTurboWarpMLOptimizer(this.core, this.autograd);
     this.linearAlgebra = new EtudeTurboWarpMLLinearAlgebra();
-    this._setupAutoProxy();
-  }
-
-  _setupAutoProxy() {
-    const modules = { core: this.core, optimizer: this.optimizer, linearAlgebra: this.linearAlgebra };
-    Object.entries(modules).forEach(([_, module]) => {
-      Object.getOwnPropertyNames(Object.getPrototypeOf(module))
-        .filter(n => n !== 'constructor' && typeof module[n] === 'function' && !n.startsWith('_'))
-        .forEach(n => { if (!this[n]) this[n] = (...args) => module[n](...args); });
+    
+    [this.core, this.optimizer, this.linearAlgebra].forEach(mod => {
+      Object.getOwnPropertyNames(Object.getPrototypeOf(mod))
+        .filter(n => n !== 'constructor' && typeof mod[n] === 'function' && !n.startsWith('_'))
+        .forEach(n => this[n] = (...args) => mod[n](...args));
     });
   }
 
   getInfo() {
     return {
-      id: 'EtudeTurboWarpML',
-      name: 'Etude-TurboWarp-ML',
-      color1: '#4C97FF',
-      color2: '#3d85c6',
-      color3: '#2e5d8f',
-      author: 'Asuka | Lin Xi',
-      version: '0.0.8',
+      id: 'EtudeTurboWarpML', name: 'Etude-TurboWarp-ML',
+      color1: '#4C97FF', color2: '#3d85c6', color3: '#2e5d8f',
+      author: 'Asuka | Lin Xi', version: '0.0.9',
       blocks: [
         { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
-        {
-          opcode: 'endModelDefinition',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '构建并初始化模型 策略 [INIT]',
-          arguments: { INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'addLinearLayer',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '添加线性层 输入维度 [INPUT_DIM] 输出维度 [OUTPUT_DIM] 使用偏置 [USE_BIAS]',
-          arguments: {
-            INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
-            OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 },
-            USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' }
-          },
-          disableMonitor: true
-        },
-        {
-          opcode: 'addActivationLayer',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '添加激活函数 [ACTIVATION]',
-          arguments: {
-            ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' }
-          },
-          disableMonitor: true
-        },
-        {
-          opcode: 'addLayerNorm',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]',
-          arguments: { USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'addRMSNorm',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '添加RMS归一化 (RMSNorm)',
-          disableMonitor: true
-        },
-        {
-          opcode: 'loadModel',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '加载模型 (JSON) [JSON]',
-          arguments: { JSON: { type: Scratch.ArgumentType.STRING, defaultValue: '{}' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'getModelStructure',
-          blockType: Scratch.BlockType.REPORTER,
-          text: '导出模型 (JSON)',
-          disableMonitor: true
-        },
-        {
-          opcode: 'clearModel',
-          blockType: Scratch.BlockType.COMMAND,
-          text: '清除当前模型',
-          disableMonitor: true
-        },
-        {
-          opcode: 'isModelDefined',
-          blockType: Scratch.BlockType.BOOLEAN,
-          text: '模型已加载?',
-          disableMonitor: true
-        },
+        { opcode: 'endModelDefinition', blockType: Scratch.BlockType.COMMAND, text: '构建并初始化模型 策略 [INIT]', arguments: { INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' } } },
+        { opcode: 'addLinearLayer', blockType: Scratch.BlockType.COMMAND, text: '添加线性层 输入维度 [INPUT_DIM] 输出维度 [OUTPUT_DIM] 使用偏置 [USE_BIAS]', arguments: { INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 }, OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 }, USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' } } },
+        { opcode: 'addActivationLayer', blockType: Scratch.BlockType.COMMAND, text: '添加激活函数 [ACTIVATION]', arguments: { ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' } } },
+        { opcode: 'addLayerNorm', blockType: Scratch.BlockType.COMMAND, text: '添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]', arguments: { USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' } } },
+        { opcode: 'addRMSNorm', blockType: Scratch.BlockType.COMMAND, text: '添加RMS归一化 (RMSNorm)' },
+        { opcode: 'loadModel', blockType: Scratch.BlockType.COMMAND, text: '加载模型 (JSON) [JSON]', arguments: { JSON: { type: Scratch.ArgumentType.STRING, defaultValue: '{}' } } },
+        { opcode: 'getModelStructure', blockType: Scratch.BlockType.REPORTER, text: '导出模型 (JSON)' },
+        { opcode: 'clearModel', blockType: Scratch.BlockType.COMMAND, text: '清除当前模型' },
+        { opcode: 'isModelDefined', blockType: Scratch.BlockType.BOOLEAN, text: '模型已加载?' },
         { blockType: Scratch.BlockType.LABEL, text: '推理与训练' },
-        {
-          opcode: 'forward',
-          blockType: Scratch.BlockType.REPORTER,
-          text: '推理 输入向量 [INPUT]',
-          arguments: { INPUT: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1, 1]]' } },
-          disableMonitor: true
-        },
-        {
-          opcode: 'stepSGD',
-          blockType: Scratch.BlockType.COMMAND,
-          text: 'SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]',
-          arguments: {
-            PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' },
-            TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' },
-            LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' },
-            LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 }
-          },
-          disableMonitor: true
-        },
-        {
-          opcode: 'stepAdamW',
-          blockType: Scratch.BlockType.COMMAND,
-          text: 'AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]',
-          arguments: {
-            PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' },
-            TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' },
-            LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' },
-            LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.001 },
-            DECAY: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 },
-            BETA1: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.9 },
-            BETA2: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.999 },
-            EPS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1e-8 }
-          },
-          disableMonitor: true
-        },
+        { opcode: 'forward', blockType: Scratch.BlockType.REPORTER, text: '推理 输入向量 [INPUT]', arguments: { INPUT: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1, 1]]' } } },
+        { opcode: 'stepSGD', blockType: Scratch.BlockType.COMMAND, text: 'SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 } } },
+        { opcode: 'stepAdamW', blockType: Scratch.BlockType.COMMAND, text: 'AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.001 }, DECAY: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 }, BETA1: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.9 }, BETA2: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.999 }, EPS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1e-8 } } },
         { blockType: Scratch.BlockType.LABEL, text: '线性代数' },
-        {
-          opcode: 'matrixMultiplication',
-          blockType: Scratch.BlockType.REPORTER,
-          text: '矩阵 [A] × [B]',
-          arguments: {
-            A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' },
-            B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' }
-          },
-          disableMonitor: true
-        },
-        {
-          opcode: 'matrixAddition', 
-          blockType: Scratch.BlockType.REPORTER,
-          text: '矩阵 [A] + [B]',
-          arguments: {
-            A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' },
-            B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' }
-          },
-          disableMonitor: true
-        }
+        { opcode: 'matrixMultiplication', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] × [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } },
+        { opcode: 'matrixAddition', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] + [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } }
       ],
       menus: {
-        ACTIVATION_MENU: {
-          acceptReporters: false,
-          items: [
-            { text: 'ReLU', value: 'relu' },
-            { text: 'Tanh', value: 'tanh' },
-            { text: 'Sigmoid', value: 'sigmoid' },
-            { text: 'Softmax', value: 'softmax' }
-          ]
-        },
-        LOSS_MENU: {
-          acceptReporters: false,
-          items: [{ text: '均方误差(MSE)', value: 'mse' }, { text: '交叉熵', value: 'crossentropy' }]
-        },
-        INIT_MENU: {
-          acceptReporters: false,
-          items: [
-            { text: 'He (ReLU推荐)', value: 'he' },
-            { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' },
-            { text: '全零', value: 'zeros' },
-            { text: '全一', value: 'ones' }
-          ]
-        },
-        BOOL_MENU: {
-          acceptReporters: false,
-          items: [{ text: '是', value: 'true' }, { text: '否', value: 'false' }]
-        }
+        ACTIVATION_MENU: { items: ['relu', 'tanh', 'sigmoid', 'softmax'].map(v => ({ text: v.charAt(0).toUpperCase() + v.slice(1), value: v })) },
+        LOSS_MENU: { items: [{ text: '均方误差(MSE)', value: 'mse' }, { text: '交叉熵', value: 'crossentropy' }] },
+        INIT_MENU: { items: [{ text: 'He (ReLU推荐)', value: 'he' }, { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' }, { text: '全零', value: 'zeros' }, { text: '全一', value: 'ones' }] },
+        BOOL_MENU: { items: [{ text: '是', value: 'true' }, { text: '否', value: 'false' }] }
       }
     };
   }
