@@ -1,286 +1,400 @@
-const MLUtils = {
-  Validation: {
-    parseMatrix(str) {
+class TensorMath {
+  static Validators = {
+    parseMatrix(jsonString) {
       try {
-        const parsed = JSON.parse(str);
+        const parsed = JSON.parse(jsonString);
         return (Array.isArray(parsed) && Array.isArray(parsed[0])) ? parsed : null;
-      } catch { return null; }
+      } catch {
+        return null;
+      }
     },
-    ensureModel(state) { return state && state.isModelDefined; },
-    validatePositiveInt(val) {
-      const num = parseInt(val);
+    
+    isModelInitialized(state) {
+      return state && state.isModelDefined;
+    },
+
+    validatePositiveInteger(value) {
+      const num = parseInt(value, 10);
       return (isNaN(num) || num <= 0) ? null : num;
     }
-  },
+  };
 
-  zeros(shape) {
+  static createZeros(shape) {
     if (shape.length === 1) return new Array(shape[0]).fill(0);
     return Array.from({ length: shape[0] }, () => new Array(shape[1]).fill(0));
-  },
+  }
 
-  tensorApply(target, source, fn, ...auxSources) {
+  static applyElementWise(target, source, operationFn, ...auxiliarySources) {
     if (!target || !source) return;
     const is2D = Array.isArray(target[0]);
     
     if (is2D) {
       for (let i = 0; i < target.length; i++) {
         for (let j = 0; j < target[i].length; j++) {
-          const auxArgs = auxSources.map(aux => aux ? aux[i][j] : undefined);
-          target[i][j] = fn(target[i][j], source[i][j], ...auxArgs);
+          const auxArgs = auxiliarySources.map(aux => aux ? aux[i][j] : undefined);
+          target[i][j] = operationFn(target[i][j], source[i][j], ...auxArgs);
         }
       }
     } else {
       for (let i = 0; i < target.length; i++) {
-        const auxArgs = auxSources.map(aux => aux ? aux[i] : undefined);
-        target[i] = fn(target[i], source[i], ...auxArgs);
+        const auxArgs = auxiliarySources.map(aux => aux ? aux[i] : undefined);
+        target[i] = operationFn(target[i], source[i], ...auxArgs);
       }
     }
-  },
+  }
 
-  mapMatrices(a, b, op) {
-    if (!a || !b || a.length !== b.length || a[0].length !== b[0].length) return [];
-    return a.map((row, i) => row.map((val, j) => op(val, b[i][j])));
-  },
+  static mapMatrix(matrixA, matrixB, operationFn) {
+    if (!matrixA || !matrixB || matrixA.length !== matrixB.length || matrixA[0].length !== matrixB[0].length) {
+      return [];
+    }
+    return matrixA.map((row, i) => row.map((val, j) => operationFn(val, matrixB[i][j])));
+  }
 
-  transpose(m) {
-    if (!m?.length || !m[0]) return [];
-    return m[0].map((_, c) => m.map(r => r[c]));
-  },
+  static transpose(matrix) {
+    if (!matrix?.length || !matrix[0]) return [];
+    return matrix[0].map((_, colIndex) => matrix.map(row => row[colIndex]));
+  }
 
-  matMul(a, b) {
-    if (!a.length || !b.length || a[0].length !== b.length) return [];
-    const bT = this.transpose(b);
-    return a.map(row => bT.map(col => row.reduce((s, v, k) => s + v * col[k], 0)));
-  },
+  static matrixMultiply(matrixA, matrixB) {
+    if (!matrixA.length || !matrixB.length || matrixA[0].length !== matrixB.length) return [];
+    const matrixBTransposed = this.transpose(matrixB);
+    return matrixA.map(row => 
+      matrixBTransposed.map(col => 
+        row.reduce((sum, val, k) => sum + val * col[k], 0)
+      )
+    );
+  }
 
-  sumRows(m) {
-    return m?.[0] ? m[0].map((_, c) => m.reduce((s, r) => s + r[c], 0)) : [];
-  },
+  static sumRows(matrix) {
+    return matrix?.[0] ? matrix[0].map((_, colIndex) => matrix.reduce((sum, row) => sum + row[colIndex], 0)) : [];
+  }
 
-  matAdd(a, b) { return this.mapMatrices(a, b, (x, y) => x + y); },
+  static matrixAdd(matrixA, matrixB) {
+    return this.mapMatrix(matrixA, matrixB, (a, b) => a + b);
+  }
 
-  ActivationRegistry: {
-    _acts: {
-      relu: { f: x => Math.max(0, x), b: (x, g) => (x > 0 ? g : 0) },
-      tanh: { f: x => Math.tanh(x), b: (x, g) => (1 - x * x) * g },
-      sigmoid: { f: x => 1 / (1 + Math.exp(-x)), b: (x, g) => (x * (1 - x)) * g }
+  static Activations = {
+    _functions: {
+      relu: { forward: x => Math.max(0, x), backward: (x, grad) => (x > 0 ? grad : 0) },
+      tanh: { forward: x => Math.tanh(x), backward: (x, grad) => (1 - x * x) * grad },
+      sigmoid: { forward: x => 1 / (1 + Math.exp(-x)), backward: (x, grad) => (x * (1 - x)) * grad }
     },
 
-    apply(m, type) {
-      if (!m) return m;
+    forward(matrix, type) {
+      if (!matrix) return matrix;
+      
       if (type === 'softmax') {
-        return m.map(row => {
-          const max = Math.max(...row);
-          const exps = row.map(v => Math.exp(v - max));
-          const sum = exps.reduce((a, b) => a + b, 0);
-          return exps.map(e => e / sum);
+        return matrix.map(row => {
+          const maxVal = Math.max(...row);
+          const exps = row.map(v => Math.exp(v - maxVal));
+          const sumExps = exps.reduce((a, b) => a + b, 0);
+          return exps.map(e => e / sumExps);
         });
       }
-      const act = this._acts[type];
-      return act ? m.map(r => r.map(act.f)) : m;
+
+      const act = this._functions[type];
+      return act ? matrix.map(row => row.map(act.forward)) : matrix;
     },
 
-    derivative(activated, type, grad) {
-      if (!activated || !grad) return grad;
+    backward(activatedMatrix, type, gradients) {
+      if (!activatedMatrix || !gradients) return gradients;
+
       if (type === 'softmax') {
-        return activated.map((row, i) => {
-          const g = grad[i];
+        return activatedMatrix.map((row, i) => {
+          const gradRow = gradients[i];
           return row.map((_, j) => {
             let sum = 0;
             for (let k = 0; k < row.length; k++) {
-              sum += g[k] * (j === k ? row[k] * (1 - row[k]) : -row[j] * row[k]);
+              sum += gradRow[k] * (j === k ? row[k] * (1 - row[k]) : -row[j] * row[k]);
             }
             return sum;
           });
         });
       }
-      const act = this._acts[type];
-      return act ? activated.map((r, i) => r.map((v, j) => act.b(v, grad[i][j]))) : grad;
-    }
-  },
 
-  Initializers: {
-    generate(strategy, inDim, outDim) {
-      let fn;
-      if (strategy === 'he') fn = () => (Math.random() - 0.5) * 2 * Math.sqrt(2.0 / inDim);
-      else if (strategy === 'xavier') fn = () => (Math.random() - 0.5) * 2 * Math.sqrt(6 / (inDim + outDim));
-      else if (strategy === 'ones') fn = () => 1;
-      else fn = () => 0;
-      return Array.from({ length: outDim }, () => Array.from({ length: inDim }, fn));
+      const act = this._functions[type];
+      return act ? activatedMatrix.map((row, i) => row.map((val, j) => act.backward(val, gradients[i][j]))) : gradients;
     }
-  },
+  };
 
-  computeLossAndGradient(pred, target, lossType) {
-    if (!pred || !target || pred.length !== target.length) return { loss: 0, grad: [] };
-    const N = pred.length;
+  static Initializers = {
+    generate(strategy, inputDim, outputDim) {
+      let generatorFn;
+      if (strategy === 'he') {
+        generatorFn = () => (Math.random() - 0.5) * 2 * Math.sqrt(2.0 / inputDim);
+      } else if (strategy === 'xavier') {
+        generatorFn = () => (Math.random() - 0.5) * 2 * Math.sqrt(6 / (inputDim + outputDim));
+      } else if (strategy === 'ones') {
+        generatorFn = () => 1;
+      } else {
+        generatorFn = () => 0;
+      }
+      return Array.from({ length: outputDim }, () => Array.from({ length: inputDim }, generatorFn));
+    }
+  };
+
+  static computeLossAndGradient(prediction, target, lossType) {
+    if (!prediction || !target || prediction.length !== target.length) {
+      return { loss: 0, gradients: [] };
+    }
+    
+    const N = prediction.length;
     let totalLoss = 0;
     
-    const grad = pred.map((row, i) => row.map((val, j) => {
-      const t = target[i][j];
+    const gradients = prediction.map((row, i) => row.map((val, j) => {
+      const targetVal = target[i][j];
+      
       if (lossType === 'crossentropy') {
         const safeVal = val + 1e-7;
-        totalLoss -= t * Math.log(safeVal);
-        return -t / safeVal;
+        totalLoss -= targetVal * Math.log(safeVal);
+        return -targetVal / safeVal;
       } else {
-        const diff = val - t;
+
+        const diff = val - targetVal;
         totalLoss += diff * diff;
         return 2 * diff / N;
       }
     }));
 
-    return { loss: totalLoss / N, grad };
+    return { loss: totalLoss / N, gradients };
   }
-};
+}
 
-class EtudeTurboWarpMLCore {
+class EtudeMLCore {
   constructor() {
-    this._pendingLayers = [];
-    this.globalState = this._createFreshState();
+    this._pendingLayerConfigs = [];
+    this.globalState = this._initializeState();
   }
 
-  _createFreshState() {
+  _initializeState() {
     return {
-      layers: [], isModelDefined: false,
+      layers: [],
+      isModelDefined: false,
       computationGraph: { forward: [], backward: [] },
-      modelMeta: { name: 'Etude-Model', inputDim: null, outputDim: null, totalLayers: 0, inputName: 'tensor_0', created: Date.now() },
-      parameters: {}, gradients: {}, forwardData: {},
-      optimizerState: { step: 0, m: {}, v: {} }
+      modelMeta: { 
+        name: 'Etude-Model', 
+        inputDim: null, 
+        outputDim: null, 
+        totalLayers: 0, 
+        inputTensorName: 'tensor_0', 
+        createdAt: Date.now() 
+      },
+      parameters: {},
+      gradients: {},
+      forwardCache: {},
+      optimizerState: { step: 0, firstMoment: {}, secondMoment: {} }
     };
   }
 
-  _generateZeroGrads(layer) {
-    const isLinear = layer.type === 'linear';
+  _createZeroGradients(layerConfig) {
+    const isLinear = layerConfig.type === 'linear';
     return {
-      weight: MLUtils.zeros(isLinear ? [layer.output_dim, layer.input_dim] : [layer.input_dim]),
-      bias: layer.use_bias ? MLUtils.zeros(isLinear ? [layer.output_dim] : [layer.input_dim]) : null
+      weight: TensorMath.createZeros(isLinear ? [layerConfig.outputDim, layerConfig.inputDim] : [layerConfig.inputDim]),
+      bias: layerConfig.useBias ? TensorMath.createZeros(isLinear ? [layerConfig.outputDim] : [layerConfig.inputDim]) : null
     };
   }
 
-  _addPending(config) { this._pendingLayers.push(config); }
+  _queueLayer(config) { 
+    this._pendingLayerConfigs.push(config); 
+  }
 
   addLinearLayer(args) {
-    const inD = MLUtils.Validation.validatePositiveInt(args.INPUT_DIM);
-    const outD = MLUtils.Validation.validatePositiveInt(args.OUTPUT_DIM);
-    if (inD && outD) this._addPending({ type: 'linear', input_dim: inD, output_dim: outD, use_bias: args.USE_BIAS === 'true' });
+    const inputDim = TensorMath.Validators.validatePositiveInteger(args.INPUT_DIM);
+    const outputDim = TensorMath.Validators.validatePositiveInteger(args.OUTPUT_DIM);
+    if (inputDim && outputDim) {
+      this._queueLayer({ 
+        type: 'linear', 
+        inputDim: inputDim, 
+        outputDim: outputDim, 
+        useBias: args.USE_BIAS === 'true' 
+      });
+    }
   }
 
-  addActivationLayer(args) { this._addPending({ type: 'activation', activation: args.ACTIVATION }); }
-  addLayerNorm(args) { this._addPending({ type: 'layernorm', use_bias: args.USE_BIAS === 'true' }); }
-  addRMSNorm() { this._addPending({ type: 'rmsnorm' }); }
+  addActivationLayer(args) { 
+    this._queueLayer({ type: 'activation', activation: args.ACTIVATION }); 
+  }
 
-  endModelDefinition(args) {
-    if (!this._pendingLayers.length) return;
-    const firstLin = this._pendingLayers.find(l => l.type === 'linear');
-    if (!firstLin) return;
+  addLayerNorm(args) { 
+    this._queueLayer({ type: 'layernorm', useBias: args.USE_BIAS === 'true' }); 
+  }
 
-    let dimCheck = null;
-    for (const l of this._pendingLayers) {
-      if (l.type === 'linear') {
-        if (dimCheck !== null && l.input_dim !== dimCheck) return this.clearModel();
-        dimCheck = l.output_dim;
+  addRMSNorm() { 
+    this._queueLayer({ type: 'rmsnorm' }); 
+  }
+
+  compileModel(args) {
+    if (!this._pendingLayerConfigs.length) return;
+
+    const firstLinearLayer = this._pendingLayerConfigs.find(l => l.type === 'linear');
+    if (!firstLinearLayer) return;
+
+    let currentDimCheck = null;
+    for (const layer of this._pendingLayerConfigs) {
+      if (layer.type === 'linear') {
+        if (currentDimCheck !== null && layer.inputDim !== currentDimCheck) {
+          console.warn("Dimension mismatch in model definition");
+          return this.resetModel();
+        }
+        currentDimCheck = layer.outputDim;
       }
     }
 
-    const inputDim = firstLin.input_dim;
-    this.globalState = this._createFreshState();
-    this.globalState.modelMeta.inputDim = inputDim;
-    let currDim = inputDim;
+    const inputDimension = firstLinearLayer.inputDim;
+    this.globalState = this._initializeState();
+    this.globalState.modelMeta.inputDim = inputDimension;
+    let currentDimension = inputDimension;
 
-    this._pendingLayers.forEach((cfg, idx) => {
-      const inName = idx === 0 ? 'tensor_0' : `tensor_${idx}`;
-      const outName = `tensor_${idx + 1}`;
-      const layId = `layer_${idx}_${cfg.type}`;
-      let outDim = currDim;
+    this._pendingLayerConfigs.forEach((config, index) => {
+      const inputName = index === 0 ? 'tensor_0' : `tensor_${index}`;
+      const outputName = `tensor_${index + 1}`;
+      const layerId = `layer_${index}_${config.type}`;
+      let outputDimension = currentDimension;
       
-      if (cfg.type === 'linear') outDim = cfg.output_dim;
+      if (config.type === 'linear') outputDimension = config.outputDim;
 
-      const fullCfg = { ...cfg, id: layId, input_dim: currDim, output_dim: outDim, input_name: inName, output_name: outName };
-      fullCfg.activation = cfg.activation || 'none';
+      const fullConfig = { 
+        ...config, 
+        id: layerId, 
+        inputDim: currentDimension, 
+        outputDim: outputDimension, 
+        inputName, 
+        outputName,
+        activation: config.activation || 'none'
+      };
       
-      this.globalState.layers.push(fullCfg);
+      this.globalState.layers.push(fullConfig);
 
-      if (cfg.type === 'linear') {
-        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: 'linear', layerId: layId, inputs: [inName], outputs: [outName] });
-        this.globalState.parameters[layId] = {
-          weight: MLUtils.Initializers.generate(args.INIT || 'he', currDim, outDim),
-          bias: cfg.use_bias ? new Array(outDim).fill(0) : null
+      if (config.type === 'linear') {
+        this.globalState.computationGraph.forward.push({ 
+          id: `op_${index}`, 
+          type: 'linear', 
+          layerId, 
+          inputs: [inputName], 
+          outputs: [outputName] 
+        });
+        
+        this.globalState.parameters[layerId] = {
+          weight: TensorMath.Initializers.generate(args.INIT || 'he', currentDimension, outputDimension),
+          bias: config.useBias ? new Array(outputDimension).fill(0) : null
         };
-        currDim = outDim;
-      } else if (cfg.type === 'activation') {
-        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: 'activation', activation_type: cfg.activation, inputs: [inName], outputs: [outName] });
+        currentDimension = outputDimension;
+
+      } else if (config.type === 'activation') {
+        this.globalState.computationGraph.forward.push({ 
+          id: `op_${index}`, 
+          type: 'activation', 
+          activationType: config.activation, 
+          inputs: [inputName], 
+          outputs: [outputName] 
+        });
+
       } else {
-        const isRMS = cfg.type === 'rmsnorm';
-        this.globalState.computationGraph.forward.push({ id: `op_${idx}`, type: cfg.type, layerId: layId, inputs: [inName], outputs: [outName] });
-        this.globalState.parameters[layId] = {
-          weight: new Array(currDim).fill(1),
-          bias: (cfg.use_bias && !isRMS) ? new Array(currDim).fill(0) : null
+        const isRMS = config.type === 'rmsnorm';
+        this.globalState.computationGraph.forward.push({ 
+          id: `op_${index}`, 
+          type: config.type, 
+          layerId, 
+          inputs: [inputName], 
+          outputs: [outputName] 
+        });
+        
+        this.globalState.parameters[layerId] = {
+          weight: new Array(currentDimension).fill(1),
+          bias: (config.useBias && !isRMS) ? new Array(currentDimension).fill(0) : null
         };
       }
-      this.globalState.gradients[layId] = this._generateZeroGrads(fullCfg);
+      
+      this.globalState.gradients[layerId] = this._createZeroGradients(fullConfig);
     });
 
     this.globalState.modelMeta.totalLayers = this.globalState.layers.length;
-    this.globalState.modelMeta.outputDim = currDim;
+    this.globalState.modelMeta.outputDim = currentDimension;
     this.globalState.isModelDefined = true;
-    this._pendingLayers = [];
+    this._pendingLayerConfigs = [];
   }
 
-  forward(args) {
-    if (!MLUtils.Validation.ensureModel(this.globalState)) return '[]';
-    const input = MLUtils.Validation.parseMatrix(args.INPUT);
-    if (!input || input[0].length !== this.globalState.modelMeta.inputDim) return '[]';
-
-    this.globalState.forwardData = {};
-    const firstIn = this.globalState.computationGraph.forward[0]?.inputs[0] || 'tensor_0';
-    this.globalState.forwardData[firstIn] = { preActivation: null, postActivation: input };
+  forwardPropagate(args) {
+    if (!TensorMath.Validators.isModelInitialized(this.globalState)) return '[]';
     
-    let val = input;
+    const inputTensor = TensorMath.Validators.parseMatrix(args.INPUT);
+    if (!inputTensor || inputTensor[0].length !== this.globalState.modelMeta.inputDim) return '[]';
+
+    this.globalState.forwardCache = {};
+    const initialInputName = this.globalState.computationGraph.forward[0]?.inputs[0] || 'tensor_0';
+
+    this.globalState.forwardCache[initialInputName] = { preActivation: null, postActivation: inputTensor };
+    
+    let currentTensor = inputTensor;
+
     for (const node of this.globalState.computationGraph.forward) {
-      let outVal;
+      let outputTensor;
+
       if (node.type === 'linear') {
-        const p = this.globalState.parameters[node.layerId];
-        outVal = val.map(r => p.weight.map((wR, i) => r.reduce((s, v, k) => s + v * wR[k], 0) + (p.bias ? p.bias[i] : 0)));
-        this.globalState.forwardData[node.outputs[0]] = { preActivation: val, postActivation: outVal };
+        const params = this.globalState.parameters[node.layerId];
+        outputTensor = currentTensor.map(row => 
+          params.weight.map((weightRow, i) => 
+            row.reduce((sum, val, k) => sum + val * weightRow[k], 0) + (params.bias ? params.bias[i] : 0)
+          )
+        );
+        this.globalState.forwardCache[node.outputs[0]] = { preActivation: currentTensor, postActivation: outputTensor };
+
       } else if (node.type === 'activation') {
-        outVal = MLUtils.ActivationRegistry.apply(val, node.activation_type);
-        this.globalState.forwardData[node.outputs[0]] = { preActivation: val, postActivation: outVal };
+        outputTensor = TensorMath.Activations.forward(currentTensor, node.activationType);
+        this.globalState.forwardCache[node.outputs[0]] = { preActivation: currentTensor, postActivation: outputTensor };
+
       } else {
-        outVal = this._normForward(node, val);
+        outputTensor = this._forwardNormalization(node, currentTensor);
       }
-      val = outVal;
+      currentTensor = outputTensor;
     }
-    return JSON.stringify(val);
+    return JSON.stringify(currentTensor);
   }
 
-  _normForward(node, input) {
+  _forwardNormalization(node, input) {
     const params = this.globalState.parameters[node.layerId];
     const isRMS = node.type === 'rmsnorm';
-    const cache = [];
+    const normCache = []; 
+
     const output = input.map(row => {
-      let mean = 0, inv = 0;
+      let mean = 0;
+      let invStd = 0;
+
       if (isRMS) {
-        inv = 1 / Math.sqrt(row.reduce((a, b) => a + b * b, 0) / row.length + 1e-5);
-        cache.push({ inv });
+        const sumSquares = row.reduce((acc, val) => acc + val * val, 0);
+        invStd = 1 / Math.sqrt(sumSquares / row.length + 1e-5);
+        normCache.push({ invStd });
       } else {
-        mean = row.reduce((a, b) => a + b, 0) / row.length;
-        inv = 1 / Math.sqrt(row.reduce((a, b) => a + (b - mean) ** 2, 0) / row.length + 1e-5);
-        cache.push({ mean, inv });
+        mean = row.reduce((acc, val) => acc + val, 0) / row.length;
+        const variance = row.reduce((acc, val) => acc + (val - mean) ** 2, 0) / row.length;
+        invStd = 1 / Math.sqrt(variance + 1e-5);
+        normCache.push({ mean, invStd });
       }
-      return row.map((v, i) => {
-        const norm = isRMS ? v * inv : (v - mean) * inv;
-        return norm * params.weight[i] + (params.bias ? params.bias[i] : 0);
+
+      return row.map((val, i) => {
+        const normalizedVal = isRMS ? val * invStd : (val - mean) * invStd;
+        return normalizedVal * params.weight[i] + (params.bias ? params.bias[i] : 0);
       });
     });
-    this.globalState.forwardData[node.outputs[0]] = { preActivation: input, postActivation: output, cache };
+
+    this.globalState.forwardCache[node.outputs[0]] = { 
+      preActivation: input, 
+      postActivation: output, 
+      statistics: normCache 
+    };
     return output;
   }
 
   getModelStructure() {
     if (!this.globalState.isModelDefined) return JSON.stringify({ error: 'Model not defined' });
     return JSON.stringify({
-      format: 'etude-ml-model-1.3', meta: this.globalState.modelMeta,
-      layers: this.globalState.layers.map(l => ({ config: l, parameters: this.globalState.parameters[l.id] })),
-      computation_graph: this.globalState.computationGraph
+      format: 'etude-ml-model-1.3', 
+      meta: this.globalState.modelMeta,
+      layers: this.globalState.layers.map(l => ({ 
+        config: l, 
+        parameters: this.globalState.parameters[l.id] 
+      })),
+      computationGraph: this.globalState.computationGraph
     });
   }
 
@@ -288,184 +402,230 @@ class EtudeTurboWarpMLCore {
     try {
       const data = JSON.parse(args.JSON);
       if (!data.format?.startsWith('etude-ml')) return;
-      this.clearModel();
+      
+      this.resetModel();
       this.globalState.modelMeta = data.meta;
-      this.globalState.computationGraph = data.computation_graph;
+      this.globalState.computationGraph = data.computationGraph;
       this.globalState.isModelDefined = true;
+      
       (data.layers || []).forEach(({ config, parameters }) => {
         this.globalState.layers.push(config);
         if (parameters) this.globalState.parameters[config.id] = parameters;
-        this.globalState.gradients[config.id] = this._generateZeroGrads(config);
+        this.globalState.gradients[config.id] = this._createZeroGradients(config);
       });
-    } catch (e) { console.warn("Load failed", e); }
+    } catch (e) { 
+      console.warn("Model load failed", e); 
+    }
   }
 
-  clearModel() { this.globalState = this._createFreshState(); this._pendingLayers = []; }
-  isModelDefined() { return this.globalState.isModelDefined; }
+  resetModel() { 
+    this.globalState = this._initializeState(); 
+    this._pendingLayerConfigs = []; 
+  }
+
+  isModelReady() { 
+    return this.globalState.isModelDefined; 
+  }
 }
 
-class EtudeTurboWarpMLAutograd {
-  constructor(core) { this.core = core; }
-
-  zeroGrad() {
-    this.core.globalState.layers.forEach(l => this.core.globalState.gradients[l.id] = this.core._generateZeroGrads(l));
+class AutogradEngine {
+  constructor(core) { 
+    this.core = core; 
   }
 
-  backward(args) {
-    if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
-    const gradIn = MLUtils.Validation.parseMatrix(args.GRAD);
-    if (!gradIn) return;
+  zeroGradients() {
+    this.core.globalState.layers.forEach(layer => {
+      this.core.globalState.gradients[layer.id] = this.core._createZeroGradients(layer);
+    });
+  }
+
+  backwardPropagate(args) {
+    if (!TensorMath.Validators.isModelInitialized(this.core.globalState)) return;
+    
+    const outputGradient = TensorMath.Validators.parseMatrix(args.GRAD);
+    if (!outputGradient) return;
 
     const graph = this.core.globalState.computationGraph;
-    const gradMap = { [graph.forward.at(-1).outputs[0]]: gradIn };
+
+    const gradientMap = { [graph.forward.at(-1).outputs[0]]: outputGradient };
 
     for (let i = graph.forward.length - 1; i >= 0; i--) {
       const node = graph.forward[i];
-      const dy = gradMap[node.outputs[0]];
+      const dy = gradientMap[node.outputs[0]]; 
       if (!dy) continue;
 
       if (node.type === 'linear') {
-        const fwd = this.core.globalState.forwardData[node.outputs[0]];
-        const p = this.core.globalState.parameters[node.layerId];
-        gradMap[node.inputs[0]] = MLUtils.matMul(dy, p.weight);
+        const fwdData = this.core.globalState.forwardCache[node.outputs[0]];
+        const params = this.core.globalState.parameters[node.layerId];
+
+        gradientMap[node.inputs[0]] = TensorMath.matrixMultiply(dy, params.weight);
+
         this.core.globalState.gradients[node.layerId] = {
-          weight: MLUtils.matMul(MLUtils.transpose(dy), fwd.preActivation),
-          bias: p.bias ? MLUtils.sumRows(dy) : null
+
+          weight: TensorMath.matrixMultiply(TensorMath.transpose(dy), fwdData.preActivation),
+
+          bias: params.bias ? TensorMath.sumRows(dy) : null
         };
+
       } else if (node.type === 'activation') {
-        const fwd = this.core.globalState.forwardData[node.outputs[0]];
-        gradMap[node.inputs[0]] = MLUtils.ActivationRegistry.derivative(fwd.postActivation, node.activation_type, dy);
+        const fwdData = this.core.globalState.forwardCache[node.outputs[0]];
+
+        gradientMap[node.inputs[0]] = TensorMath.Activations.backward(fwdData.postActivation, node.activationType, dy);
+
       } else if (node.type.includes('norm')) {
-        this._normBackward(node, dy, gradMap, node.type === 'rmsnorm');
+        this._backwardNormalization(node, dy, gradientMap, node.type === 'rmsnorm');
       }
     }
   }
 
-  _normBackward(node, dy, gradMap, isRMS) {
-    const { preActivation: x, cache } = this.core.globalState.forwardData[node.outputs[0]];
+  _backwardNormalization(node, dy, gradientMap, isRMS) {
+    const { preActivation: input, statistics } = this.core.globalState.forwardCache[node.outputs[0]];
     const { weight: gamma, bias: beta } = this.core.globalState.parameters[node.layerId];
-    const [N, D] = [x.length, x[0].length];
+    const [BatchSize, FeatureDim] = [input.length, input[0].length];
     
-    const dGamma = new Array(D).fill(0);
-    const dBeta = beta ? new Array(D).fill(0) : null;
+    const dGamma = new Array(FeatureDim).fill(0);
+    const dBeta = beta ? new Array(FeatureDim).fill(0) : null;
     const dx = [];
 
-    for (let i = 0; i < N; i++) {
-      const { inv, mean } = cache[i];
-      const r_x = x[i];
-      const r_dy = dy[i];
-      const x_hat = r_x.map(v => (v - (isRMS ? 0 : mean)) * inv);
-
-      for (let j = 0; j < D; j++) {
-        dGamma[j] += r_dy[j] * x_hat[j];
-        if (beta) dBeta[j] += r_dy[j];
-      }
-
-      const dldx_hat = r_dy.map((v, j) => v * gamma[j]);
+    for (let i = 0; i < BatchSize; i++) {
+      const { invStd, mean } = statistics[i];
+      const rowInput = input[i];
+      const rowDy = dy[i];
       
-      let row_dx;
-      if (isRMS) {
-        const sum = dldx_hat.reduce((a, v, j) => a + v * r_x[j], 0);
-        const fac = (inv * inv) / D * sum;
-        row_dx = dldx_hat.map((v, j) => inv * (v - r_x[j] * fac));
-      } else {
-        const sum1 = dldx_hat.reduce((a, b) => a + b, 0);
-        const sum2 = dldx_hat.reduce((a, v, j) => a + v * x_hat[j], 0);
-        row_dx = dldx_hat.map((v, j) => (inv / D) * (D * v - sum1 - x_hat[j] * sum2));
+      const xHat = rowInput.map(val => (val - (isRMS ? 0 : mean)) * invStd);
+
+      for (let j = 0; j < FeatureDim; j++) {
+        dGamma[j] += rowDy[j] * xHat[j];
+        if (beta) dBeta[j] += rowDy[j];
       }
-      dx.push(row_dx);
+
+      const dL_dxHat = rowDy.map((val, j) => val * gamma[j]);
+      
+      let rowDx;
+      if (isRMS) {
+        const sumProd = dL_dxHat.reduce((acc, val, j) => acc + val * rowInput[j], 0);
+        const factor = (invStd * invStd) / FeatureDim * sumProd;
+        rowDx = dL_dxHat.map((val, j) => invStd * (val - rowInput[j] * factor));
+      } else {
+        const sumGrad = dL_dxHat.reduce((acc, val) => acc + val, 0);
+        const sumProd = dL_dxHat.reduce((acc, val, j) => acc + val * xHat[j], 0);
+        rowDx = dL_dxHat.map((val, j) => 
+          (invStd / FeatureDim) * (FeatureDim * val - sumGrad - xHat[j] * sumProd)
+        );
+      }
+      dx.push(rowDx);
     }
-    gradMap[node.inputs[0]] = dx;
+    
+    gradientMap[node.inputs[0]] = dx;
     this.core.globalState.gradients[node.layerId] = { weight: dGamma, bias: dBeta };
   }
 }
 
-class EtudeTurboWarpMLOptimizer {
+class OptimizerEngine {
   constructor(core, autograd) {
     this.core = core;
     this.autograd = autograd;
   }
 
   stepSGD(args) {
-    const lr = parseFloat(args.LR) || 0.01;
-    this._performOptimization(args, (w, g) => w - lr * g, false);
+    const learningRate = parseFloat(args.LR) || 0.01;
+    this._performOptimizationStep(args, (param, grad) => param - learningRate * grad, false);
   }
 
   stepAdamW(args) {
-    this._performOptimization(args, null, true);
+    this._performOptimizationStep(args, null, true);
   }
   
-  _performOptimization(args, simpleKernel, needsState = false) {
-    if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
-    const pred = MLUtils.Validation.parseMatrix(args.PRED);
-    const target = MLUtils.Validation.parseMatrix(args.TARGET);
-    if (!pred || !target) return;
+  _performOptimizationStep(args, simpleUpdateKernel, requiresComplexState = false) {
+    if (!TensorMath.Validators.isModelInitialized(this.core.globalState)) return;
+    
+    const prediction = TensorMath.Validators.parseMatrix(args.PRED);
+    const target = TensorMath.Validators.parseMatrix(args.TARGET);
+    if (!prediction || !target) return;
 
-    this.autograd.zeroGrad();
-    const { grad } = MLUtils.computeLossAndGradient(pred, target, args.LOSS || 'mse');
-    this.autograd.backward({ GRAD: JSON.stringify(grad) });
+    this.autograd.zeroGradients();
+
+    const { gradients: outputGrads } = TensorMath.computeLossAndGradient(prediction, target, args.LOSS || 'mse');
+
+    this.autograd.backwardPropagate({ GRAD: JSON.stringify(outputGrads) });
 
     const optState = this.core.globalState.optimizerState;
     optState.step++;
 
-    let adamConf = null;
-    if (needsState && !simpleKernel) {
+    let adamConfig = null;
+    if (requiresComplexState && !simpleUpdateKernel) {
         const t = optState.step;
-        adamConf = {
+        const beta1 = parseFloat(args.BETA1) || 0.9;
+        const beta2 = parseFloat(args.BETA2) || 0.999;
+        adamConfig = {
             lr: parseFloat(args.LR) || 0.001,
-            b1: parseFloat(args.BETA1) || 0.9,
-            b2: parseFloat(args.BETA2) || 0.999,
-            eps: parseFloat(args.EPS) || 1e-8,
+            beta1: beta1,
+            beta2: beta2,
+            epsilon: parseFloat(args.EPS) || 1e-8,
             decay: parseFloat(args.DECAY) || 0.01,
-            c1: 1 - Math.pow(parseFloat(args.BETA1)||0.9, t),
-            c2: 1 - Math.pow(parseFloat(args.BETA2)||0.999, t)
+            // 偏差修正系数
+            biasCorrection1: 1 - Math.pow(beta1, t),
+            biasCorrection2: 1 - Math.pow(beta2, t)
         };
     }
 
+    // 4. 应用参数更新
     this.core.globalState.layers.forEach(layer => {
-      const pid = layer.id;
-      const params = this.core.globalState.parameters[pid];
-      const grads = this.core.globalState.gradients[pid];
+      const layerId = layer.id;
+      const params = this.core.globalState.parameters[layerId];
+      const grads = this.core.globalState.gradients[layerId];
       if (!params) return;
 
-      ['weight', 'bias'].forEach(key => {
-        if (!params[key]) return;
-        const pT = params[key];
-        const gT = grads[key];
+      ['weight', 'bias'].forEach(paramKey => {
+        if (!params[paramKey]) return;
         
-        if (simpleKernel) {
-             MLUtils.tensorApply(pT, gT, simpleKernel);
+        const paramTensor = params[paramKey];
+        const gradTensor = grads[paramKey];
+        
+        if (simpleUpdateKernel) {
+             TensorMath.applyElementWise(paramTensor, gradTensor, simpleUpdateKernel);
         } else {
-             if (!optState.m[pid]) optState.m[pid] = {};
-             if (!optState.v[pid]) optState.v[pid] = {};
-             if (!optState.m[pid][key]) {
-                 const shape = Array.isArray(pT[0]) ? [pT.length, pT[0].length] : [pT.length];
-                 optState.m[pid][key] = MLUtils.zeros(shape);
-                 optState.v[pid][key] = MLUtils.zeros(shape);
+             if (!optState.firstMoment[layerId]) optState.firstMoment[layerId] = {};
+             if (!optState.secondMoment[layerId]) optState.secondMoment[layerId] = {};
+
+             if (!optState.firstMoment[layerId][paramKey]) {
+                 const shape = Array.isArray(paramTensor[0]) ? [paramTensor.length, paramTensor[0].length] : [paramTensor.length];
+                 optState.firstMoment[layerId][paramKey] = TensorMath.createZeros(shape);
+                 optState.secondMoment[layerId][paramKey] = TensorMath.createZeros(shape);
              }
-             const mT = optState.m[pid][key];
-             const vT = optState.v[pid][key];
+
+             const mTensor = optState.firstMoment[layerId][paramKey];
+             const vTensor = optState.secondMoment[layerId][paramKey];
              
-             const update = (w, g, m, v) => {
-                 const nm = adamConf.b1 * m + (1 - adamConf.b1) * g;
-                 const nv = adamConf.b2 * v + (1 - adamConf.b2) * g * g;
-                 const mHat = nm / adamConf.c1;
-                 const vHat = nv / adamConf.c2;
-                 const nw = w - adamConf.lr * ((mHat / (Math.sqrt(vHat) + adamConf.eps)) + adamConf.decay * w);
-                 return { w: nw, m: nm, v: nv };
+             const updateAdamKernel = (w, g, m, v) => {
+
+                 const nextM = adamConfig.beta1 * m + (1 - adamConfig.beta1) * g;
+
+                 const nextV = adamConfig.beta2 * v + (1 - adamConfig.beta2) * g * g;
+
+                 const mHat = nextM / adamConfig.biasCorrection1;
+                 const vHat = nextV / adamConfig.biasCorrection2;
+
+                 const nextW = w - adamConfig.lr * ((mHat / (Math.sqrt(vHat) + adamConfig.epsilon)) + adamConfig.decay * w);
+                 
+                 return { w: nextW, m: nextM, v: nextV };
              };
 
-             if (Array.isArray(pT[0])) { // 2D
-                 for(let i=0; i<pT.length; i++) {
-                     for(let j=0; j<pT[i].length; j++) {
-                         const res = update(pT[i][j], gT[i][j], mT[i][j], vT[i][j]);
-                         pT[i][j] = res.w; mT[i][j] = res.m; vT[i][j] = res.v;
+             if (Array.isArray(paramTensor[0])) { 
+                 for(let i=0; i < paramTensor.length; i++) {
+                     for(let j=0; j < paramTensor[i].length; j++) {
+                         const result = updateAdamKernel(paramTensor[i][j], gradTensor[i][j], mTensor[i][j], vTensor[i][j]);
+                         paramTensor[i][j] = result.w; 
+                         mTensor[i][j] = result.m; 
+                         vTensor[i][j] = result.v;
                      }
                  }
-             } else { // 1D
-                 for(let i=0; i<pT.length; i++) {
-                     const res = update(pT[i], gT[i], mT[i], vT[i]);
-                     pT[i] = res.w; mT[i] = res.m; vT[i] = res.v;
+             } else { 
+                 for(let i=0; i < paramTensor.length; i++) {
+                     const result = updateAdamKernel(paramTensor[i], gradTensor[i], mTensor[i], vTensor[i]);
+                     paramTensor[i] = result.w; 
+                     mTensor[i] = result.m; 
+                     vTensor[i] = result.v;
                  }
              }
         }
@@ -474,31 +634,49 @@ class EtudeTurboWarpMLOptimizer {
   }
 }
 
-class EtudeTurboWarpMLLinearAlgebra {
-  matrixMultiplication(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A);
-    const b = MLUtils.Validation.parseMatrix(args.B);
-    return JSON.stringify(MLUtils.matMul(a, b));
+class LinearAlgebraExtension {
+  multiply(args) {
+    const matrixA = TensorMath.Validators.parseMatrix(args.A);
+    const matrixB = TensorMath.Validators.parseMatrix(args.B);
+    return JSON.stringify(TensorMath.matrixMultiply(matrixA, matrixB));
   }
-  matrixAddition(args) {
-    const a = MLUtils.Validation.parseMatrix(args.A);
-    const b = MLUtils.Validation.parseMatrix(args.B);
-    return JSON.stringify(MLUtils.matAdd(a, b));
+  
+  add(args) {
+    const matrixA = TensorMath.Validators.parseMatrix(args.A);
+    const matrixB = TensorMath.Validators.parseMatrix(args.B);
+    return JSON.stringify(TensorMath.matrixAdd(matrixA, matrixB));
   }
 }
 
-class EtudeTurboWarpML {
+class EtudeMLExtension {
   constructor() {
-    this.core = new EtudeTurboWarpMLCore();
-    this.autograd = new EtudeTurboWarpMLAutograd(this.core);
-    this.optimizer = new EtudeTurboWarpMLOptimizer(this.core, this.autograd);
-    this.linearAlgebra = new EtudeTurboWarpMLLinearAlgebra();
-    
-    [this.core, this.optimizer, this.linearAlgebra].forEach(mod => {
-      Object.getOwnPropertyNames(Object.getPrototypeOf(mod))
-        .filter(n => n !== 'constructor' && typeof mod[n] === 'function' && !n.startsWith('_'))
-        .forEach(n => this[n] = (...args) => mod[n](...args));
-    });
+    this.core = new EtudeMLCore();
+    this.autograd = new AutogradEngine(this.core);
+    this.optimizer = new OptimizerEngine(this.core, this.autograd);
+    this.math = new LinearAlgebraExtension();
+
+    this._bindMethods(this.core);
+    this._bindMethods(this.optimizer);
+    this._bindMethods(this.math);
+
+    this.endModelDefinition = this.core.compileModel.bind(this.core);
+    this.forward = this.core.forwardPropagate.bind(this.core);
+    this.clearModel = this.core.resetModel.bind(this.core);
+    this.isModelDefined = this.core.isModelReady.bind(this.core);
+
+    this.matrixMultiplication = this.math.multiply.bind(this.math);
+    this.matrixAddition = this.math.add.bind(this.math);
+  }
+
+  _bindMethods(module) {
+    const proto = Object.getPrototypeOf(module);
+    Object.getOwnPropertyNames(proto)
+      .filter(name => name !== 'constructor' && typeof module[name] === 'function' && !name.startsWith('_'))
+      .forEach(name => {
+        if (!this[name]) {
+           this[name] = module[name].bind(module);
+        }
+      });
   }
 
   getInfo() {
@@ -509,7 +687,7 @@ class EtudeTurboWarpML {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.9',
+      version: '1.0.0',
       blocks: [
         {
           blockType: Scratch.BlockType.LABEL,
@@ -749,4 +927,4 @@ class EtudeTurboWarpML {
     };
   }
 }
-Scratch.extensions.register(new EtudeTurboWarpML());
+Scratch.extensions.register(new EtudeMLExtension());
