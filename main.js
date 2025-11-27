@@ -386,81 +386,15 @@ class EtudeTurboWarpMLOptimizer {
     this.autograd = autograd;
   }
 
-  _performOptimization(args, updateKernel, needsState = false) {
-    if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
-    const pred = MLUtils.Validation.parseMatrix(args.PRED);
-    const target = MLUtils.Validation.parseMatrix(args.TARGET);
-    if (!pred || !target) return;
-
-    this.autograd.zeroGrad();
-    const { grad } = MLUtils.computeLossAndGradient(pred, target, args.LOSS || 'mse');
-    this.autograd.backward({ GRAD: JSON.stringify(grad) });
-
-    const optState = this.core.globalState.optimizerState;
-    optState.step++;
-
-    this.core.globalState.layers.forEach(layer => {
-      const pid = layer.id;
-      const params = this.core.globalState.parameters[pid];
-      const grads = this.core.globalState.gradients[pid];
-      if (!params || !grads) return;
-
-      const applyUpdate = (key) => {
-        if (!params[key]) return;
-        
-        let m = null, v = null;
-        if (needsState) {
-          if (!optState.m[pid]) optState.m[pid] = {};
-          if (!optState.v[pid]) optState.v[pid] = {};
-          
-          if (!optState.m[pid][key]) {
-            const shape = Array.isArray(params[key][0]) ? [params[key].length, params[key][0].length] : [params[key].length];
-            optState.m[pid][key] = MLUtils.zeros(shape);
-            optState.v[pid][key] = MLUtils.zeros(shape);
-          }
-          m = optState.m[pid][key];
-          v = optState.v[pid][key];
-        }
-
-        MLUtils.tensorApply(params[key], grads[key], updateKernel, m, v);
-      };
-
-      applyUpdate('weight');
-      applyUpdate('bias');
-    });
-  }
-
   stepSGD(args) {
     const lr = parseFloat(args.LR) || 0.01;
     this._performOptimization(args, (w, g) => w - lr * g, false);
   }
 
   stepAdamW(args) {
-    const conf = {
-      lr: parseFloat(args.LR) || 0.001,
-      b1: parseFloat(args.BETA1) || 0.9,
-      b2: parseFloat(args.BETA2) || 0.999,
-      eps: parseFloat(args.EPS) || 1e-8,
-      decay: parseFloat(args.DECAY) || 0.01
-    };
-    
-    const t = this.core.globalState.optimizerState.step + 1; 
-    const c1 = 1 - Math.pow(conf.b1, t);
-    const c2 = 1 - Math.pow(conf.b2, t);
-
-
-    const kernel = (w, g, m, v) => {
-
-      const nm = conf.b1 * m + (1 - conf.b1) * g;
-      const nv = conf.b2 * v + (1 - conf.b2) * g * g;
-      return w; 
-    };
-    
-
     this._performOptimization(args, null, true);
   }
   
-
   _performOptimization(args, simpleKernel, needsState = false) {
     if (!MLUtils.Validation.ensureModel(this.core.globalState)) return;
     const pred = MLUtils.Validation.parseMatrix(args.PRED);
@@ -500,10 +434,8 @@ class EtudeTurboWarpMLOptimizer {
         const gT = grads[key];
         
         if (simpleKernel) {
-
              MLUtils.tensorApply(pT, gT, simpleKernel);
         } else {
-
              if (!optState.m[pid]) optState.m[pid] = {};
              if (!optState.v[pid]) optState.v[pid] = {};
              if (!optState.m[pid][key]) {
