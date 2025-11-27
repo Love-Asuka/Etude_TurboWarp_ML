@@ -563,13 +563,11 @@ class OptimizerEngine {
             beta2: beta2,
             epsilon: parseFloat(args.EPS) || 1e-8,
             decay: parseFloat(args.DECAY) || 0.01,
-            // 偏差修正系数
             biasCorrection1: 1 - Math.pow(beta1, t),
             biasCorrection2: 1 - Math.pow(beta2, t)
         };
     }
 
-    // 4. 应用参数更新
     this.core.globalState.layers.forEach(layer => {
       const layerId = layer.id;
       const params = this.core.globalState.parameters[layerId];
@@ -687,7 +685,7 @@ class EtudeMLExtension {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '1.0.0',
+      version: '0.0.9',
       blocks: [
         {
           blockType: Scratch.BlockType.LABEL,
