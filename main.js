@@ -209,7 +209,7 @@ class WebGLCompute {
       
       for (let j = 0; j < outWidth; j++) {
         const ptr = (bufferRowIndex * outWidth + j) * 4;
-        row.push(rawBuffer[ptr]); // R channel
+        row.push(rawBuffer[ptr]);
       }
       result.push(row);
     }
@@ -682,13 +682,8 @@ class AutogradEngine {
         const fwdData = this.core.globalState.forwardCache[node.outputs[0]];
         const params = this.core.globalState.parameters[node.layerId];
 
-        // dx = dy * W 
-        // dy: [Batch, OutDim], W: [OutDim, InDim] -> Result [Batch, InDim]
         gradientMap[node.inputs[0]] = TensorMath.matrixMultiply(dy, params.weight);
 
-        // dW = dy^T * x
-        // dy^T: [OutDim, Batch], x: [Batch, InDim] -> Result [OutDim, InDim]
-        // This matches params.weight shape.
         this.core.globalState.gradients[node.layerId] = {
           weight: TensorMath.matrixMultiply(TensorMath.transpose(dy), fwdData.preActivation),
           bias: params.bias ? TensorMath.sumRows(dy) : null
