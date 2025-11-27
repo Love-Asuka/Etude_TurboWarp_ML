@@ -503,35 +503,248 @@ class EtudeTurboWarpML {
 
   getInfo() {
     return {
-      id: 'EtudeTurboWarpML', name: 'Etude-TurboWarp-ML',
-      color1: '#4C97FF', color2: '#3d85c6', color3: '#2e5d8f',
-      author: 'Asuka | Lin Xi', version: '0.0.9',
+      id: 'EtudeTurboWarpML',
+      name: 'Etude-TurboWarp-ML',
+      color1: '#4C97FF',
+      color2: '#3d85c6',
+      color3: '#2e5d8f',
+      author: 'Asuka | Lin Xi',
+      version: '0.0.9',
       blocks: [
-        { blockType: Scratch.BlockType.LABEL, text: '模型构建与管理' },
-        { opcode: 'endModelDefinition', blockType: Scratch.BlockType.COMMAND, text: '构建并初始化模型 策略 [INIT]', arguments: { INIT: { type: Scratch.ArgumentType.STRING, menu: 'INIT_MENU', defaultValue: 'he' } } },
-        { opcode: 'addLinearLayer', blockType: Scratch.BlockType.COMMAND, text: '添加线性层 输入维度 [INPUT_DIM] 输出维度 [OUTPUT_DIM] 使用偏置 [USE_BIAS]', arguments: { INPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 }, OUTPUT_DIM: { type: Scratch.ArgumentType.NUMBER, defaultValue: 4 }, USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' } } },
-        { opcode: 'addActivationLayer', blockType: Scratch.BlockType.COMMAND, text: '添加激活函数 [ACTIVATION]', arguments: { ACTIVATION: { type: Scratch.ArgumentType.STRING, menu: 'ACTIVATION_MENU', defaultValue: 'relu' } } },
-        { opcode: 'addLayerNorm', blockType: Scratch.BlockType.COMMAND, text: '添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]', arguments: { USE_BIAS: { type: Scratch.ArgumentType.STRING, menu: 'BOOL_MENU', defaultValue: 'true' } } },
-        { opcode: 'addRMSNorm', blockType: Scratch.BlockType.COMMAND, text: '添加RMS归一化 (RMSNorm)' },
-        { opcode: 'loadModel', blockType: Scratch.BlockType.COMMAND, text: '加载模型 (JSON) [JSON]', arguments: { JSON: { type: Scratch.ArgumentType.STRING, defaultValue: '{}' } } },
-        { opcode: 'getModelStructure', blockType: Scratch.BlockType.REPORTER, text: '导出模型 (JSON)' },
-        { opcode: 'clearModel', blockType: Scratch.BlockType.COMMAND, text: '清除当前模型' },
-        { opcode: 'isModelDefined', blockType: Scratch.BlockType.BOOLEAN, text: '模型已加载?' },
+        {
+          blockType: Scratch.BlockType.LABEL,
+          text: '模型构建与管理'
+        },
+        {
+          opcode: 'endModelDefinition',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '构建并初始化模型 策略 [INIT]',
+          arguments: {
+            INIT: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'INIT_MENU',
+              defaultValue: 'he'
+            }
+          }
+        },
+        {
+          opcode: 'addLinearLayer',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '添加线性层 输入维度 [INPUT_DIM] 输出维度 [OUTPUT_DIM] 使用偏置 [USE_BIAS]',
+          arguments: {
+            INPUT_DIM: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 4
+            },
+            OUTPUT_DIM: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 4
+            },
+            USE_BIAS: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'BOOL_MENU',
+              defaultValue: 'true'
+            }
+          }
+        },
+        {
+          opcode: 'addActivationLayer',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '添加激活函数 [ACTIVATION]',
+          arguments: {
+            ACTIVATION: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'ACTIVATION_MENU',
+              defaultValue: 'relu'
+            }
+          }
+        },
+        {
+          opcode: 'addLayerNorm',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '添加层归一化 (LayerNorm) 使用偏置 [USE_BIAS]',
+          arguments: {
+            USE_BIAS: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'BOOL_MENU',
+              defaultValue: 'true'
+            }
+          }
+        },
+        {
+          opcode: 'addRMSNorm',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '添加RMS归一化 (RMSNorm)'
+        },
+        {
+          opcode: 'loadModel',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '加载模型 (JSON) [JSON]',
+          arguments: {
+            JSON: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '{}'
+            }
+          }
+        },
+        {
+          opcode: 'getModelStructure',
+          blockType: Scratch.BlockType.REPORTER,
+          text: '导出模型 (JSON)'
+        },
+        {
+          opcode: 'clearModel',
+          blockType: Scratch.BlockType.COMMAND,
+          text: '清除当前模型'
+        },
+        {
+          opcode: 'isModelDefined',
+          blockType: Scratch.BlockType.BOOLEAN,
+          text: '模型已加载?'
+        },
 
-        { blockType: Scratch.BlockType.LABEL, text: '推理与训练' },
-        { opcode: 'forward', blockType: Scratch.BlockType.REPORTER, text: '推理 输入向量 [INPUT]', arguments: { INPUT: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1, 1]]' } } },
-        { opcode: 'stepSGD', blockType: Scratch.BlockType.COMMAND, text: 'SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 } } },
-        { opcode: 'stepAdamW', blockType: Scratch.BlockType.COMMAND, text: 'AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]', arguments: { PRED: { type: Scratch.ArgumentType.STRING, defaultValue: '[[0]]' }, TARGET: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1]]' }, LOSS: { type: Scratch.ArgumentType.STRING, menu: 'LOSS_MENU', defaultValue: 'mse' }, LR: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.001 }, DECAY: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.01 }, BETA1: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.9 }, BETA2: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.999 }, EPS: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1e-8 } } },
-        
-        { blockType: Scratch.BlockType.LABEL, text: '线性代数' },
-        { opcode: 'matrixMultiplication', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] × [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } },
-        { opcode: 'matrixAddition', blockType: Scratch.BlockType.REPORTER, text: '矩阵 [A] + [B]', arguments: { A: { type: Scratch.ArgumentType.STRING, defaultValue: '[[1,2],[3,4]]' }, B: { type: Scratch.ArgumentType.STRING, defaultValue: '[[5,6],[7,8]]' } } }
+        {
+          blockType: Scratch.BlockType.LABEL,
+          text: '推理与训练'
+        },
+        {
+          opcode: 'forward',
+          blockType: Scratch.BlockType.REPORTER,
+          text: '推理 输入向量 [INPUT]',
+          arguments: {
+            INPUT: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[1, 1]]'
+            }
+          }
+        },
+        {
+          opcode: 'stepSGD',
+          blockType: Scratch.BlockType.COMMAND,
+          text: 'SGD优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR]',
+          arguments: {
+            PRED: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[0]]'
+            },
+            TARGET: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[1]]'
+            },
+            LOSS: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'LOSS_MENU',
+              defaultValue: 'mse'
+            },
+            LR: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 0.01
+            }
+          }
+        },
+        {
+          opcode: 'stepAdamW',
+          blockType: Scratch.BlockType.COMMAND,
+          text: 'AdamW优化 预测 [PRED] 目标 [TARGET] 损失 [LOSS] LR [LR] Decay [DECAY]',
+          arguments: {
+            PRED: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[0]]'
+            },
+            TARGET: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[1]]'
+            },
+            LOSS: {
+              type: Scratch.ArgumentType.STRING,
+              menu: 'LOSS_MENU',
+              defaultValue: 'mse'
+            },
+            LR: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 0.001
+            },
+            DECAY: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 0.01
+            },
+            BETA1: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 0.9
+            },
+            BETA2: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 0.999
+            },
+            EPS: {
+              type: Scratch.ArgumentType.NUMBER,
+              defaultValue: 1e-8
+            }
+          }
+        },
+
+        {
+          blockType: Scratch.BlockType.LABEL,
+          text: '线性代数'
+        },
+        {
+          opcode: 'matrixMultiplication',
+          blockType: Scratch.BlockType.REPORTER,
+          text: '矩阵 [A] × [B]',
+          arguments: {
+            A: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[1,2],[3,4]]'
+            },
+            B: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[5,6],[7,8]]'
+            }
+          }
+        },
+        {
+          opcode: 'matrixAddition',
+          blockType: Scratch.BlockType.REPORTER,
+          text: '矩阵 [A] + [B]',
+          arguments: {
+            A: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[1,2],[3,4]]'
+            },
+            B: {
+              type: Scratch.ArgumentType.STRING,
+              defaultValue: '[[5,6],[7,8]]'
+            }
+          }
+        }
       ],
       menus: {
-        ACTIVATION_MENU: { items: ['relu', 'tanh', 'sigmoid', 'softmax'].map(v => ({ text: v.charAt(0).toUpperCase() + v.slice(1), value: v })) },
-        LOSS_MENU: { items: [{ text: '均方误差(MSE)', value: 'mse' }, { text: '交叉熵', value: 'crossentropy' }] },
-        INIT_MENU: { items: [{ text: 'He (ReLU推荐)', value: 'he' }, { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' }, { text: '全零', value: 'zeros' }, { text: '全一', value: 'ones' }] },
-        BOOL_MENU: { items: [{ text: '是', value: 'true' }, { text: '否', value: 'false' }] }
+        ACTIVATION_MENU: {
+          items: ['relu', 'tanh', 'sigmoid', 'softmax'].map(v => ({
+            text: v.charAt(0).toUpperCase() + v.slice(1),
+            value: v
+          }))
+        },
+        LOSS_MENU: {
+          items: [
+            { text: '均方误差(MSE)', value: 'mse' },
+            { text: '交叉熵', value: 'crossentropy' }
+          ]
+        },
+        INIT_MENU: {
+          items: [
+            { text: 'He (ReLU推荐)', value: 'he' },
+            { text: 'Xavier (Sigmoid/Tanh)', value: 'xavier' },
+            { text: '全零', value: 'zeros' },
+            { text: '全一', value: 'ones' }
+          ]
+        },
+        BOOL_MENU: {
+          items: [
+            { text: '是', value: 'true' },
+            { text: '否', value: 'false' }
+          ]
+        }
       }
     };
   }
