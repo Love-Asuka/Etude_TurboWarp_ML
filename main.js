@@ -1,3 +1,225 @@
+class WebGLCompute {
+  constructor() {
+    this.canvas = document.createElement('canvas');
+    this.gl = this.canvas.getContext('webgl', { preserveDrawingBuffer: true }) || 
+              this.canvas.getContext('experimental-webgl');
+    
+    if (!this.gl) {
+      console.error("WebGL not supported");
+      return;
+    }
+
+    const ext = this.gl.getExtension('OES_texture_float');
+    if (!ext) console.warn("OES_texture_float not supported. Computation will fail.");
+    this.gl.getExtension('WEBGL_color_buffer_float'); 
+
+    this.programs = {
+      multiply: this._createProgram(this._getVertexShader(), this._getMultiplyFragmentShader()),
+      add: this._createProgram(this._getVertexShader(), this._getAddFragmentShader())
+    };
+
+    this.quadBuffer = this.gl.createBuffer();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+    this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array([
+      -1, -1,  1, -1, -1,  1,
+      -1,  1,  1, -1,  1,  1
+    ]), this.gl.STATIC_DRAW);
+  }
+
+  _getVertexShader() {
+    return `
+      attribute vec2 position;
+      varying vec2 vTexCoord;
+      void main() {
+        vTexCoord = position * 0.5 + 0.5;
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `;
+  }
+
+  _getMultiplyFragmentShader() {
+    return `
+      precision highp float;
+      varying vec2 vTexCoord;
+      uniform sampler2D uMatrixA;
+      uniform sampler2D uMatrixB;
+      uniform int uCommonDim;
+      uniform vec2 uResolution; 
+
+      void main() {
+        vec2 pos = gl_FragCoord.xy;
+        float row = floor(uResolution.y - pos.y);
+        float col = floor(pos.x);
+
+        float sum = 0.0;
+
+        for (int k = 0; k < 10000; k++) {
+          if (k >= uCommonDim) break;
+
+          vec2 uvA = vec2((float(k) + 0.5) / float(uCommonDim), 1.0 - (row + 0.5) / uResolution.y);
+          vec2 uvB = vec2((col + 0.5) / uResolution.x, 1.0 - (float(k) + 0.5) / float(uCommonDim));
+
+          float valA = texture2D(uMatrixA, uvA).r;
+          float valB = texture2D(uMatrixB, uvB).r;
+          
+          sum += valA * valB;
+        }
+
+        gl_FragColor = vec4(sum, 0.0, 0.0, 1.0);
+      }
+    `;
+  }
+
+  _getAddFragmentShader() {
+    return `
+      precision highp float;
+      varying vec2 vTexCoord;
+      uniform sampler2D uMatrixA;
+      uniform sampler2D uMatrixB;
+
+      void main() {
+        float valA = texture2D(uMatrixA, vTexCoord).r;
+        float valB = texture2D(uMatrixB, vTexCoord).r;
+        gl_FragColor = vec4(valA + valB, 0.0, 0.0, 1.0);
+      }
+    `;
+  }
+
+  _createShader(type, source) {
+    const shader = this.gl.createShader(type);
+    this.gl.shaderSource(shader, source);
+    this.gl.compileShader(shader);
+    if (!this.gl.getShaderParameter(shader, this.gl.COMPILE_STATUS)) {
+      console.error(this.gl.getShaderInfoLog(shader));
+      this.gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  }
+
+  _createProgram(vsSource, fsSource) {
+    const program = this.gl.createProgram();
+    const vs = this._createShader(this.gl.VERTEX_SHADER, vsSource);
+    const fs = this._createShader(this.gl.FRAGMENT_SHADER, fsSource);
+    this.gl.attachShader(program, vs);
+    this.gl.attachShader(program, fs);
+    this.gl.linkProgram(program);
+    return program;
+  }
+
+  _createTexture(data, width, height) {
+    const texture = this.gl.createTexture();
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
+
+    const flatData = new Float32Array(width * height * 4);
+    let ptr = 0;
+    for (let i = 0; i < height; i++) {
+      for (let j = 0; j < width; j++) {
+        const val = data[i][j];
+        flatData[ptr] = val; 
+        flatData[ptr+1] = 0;
+        flatData[ptr+2] = 0;
+        flatData[ptr+3] = 1;
+        ptr += 4;
+      }
+    }
+
+    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, width, height, 0, this.gl.RGBA, this.gl.FLOAT, flatData);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.NEAREST);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
+    this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
+    return texture;
+  }
+
+  executeOperation(type, matrixA, matrixB) {
+    if (!matrixA.length || !matrixB.length) return [];
+    
+    const rowsA = matrixA.length;
+    const colsA = matrixA[0].length;
+    
+    let outWidth, outHeight, commonDim;
+    
+    if (type === 'multiply') {
+      const rowsB = matrixB.length;
+      const colsB = matrixB[0].length;
+      if (colsA !== rowsB) return [];
+      outWidth = colsB;
+      outHeight = rowsA;
+      commonDim = colsA;
+    } else {
+      if (rowsA !== matrixB.length || colsA !== matrixB[0].length) return [];
+      outWidth = colsA;
+      outHeight = rowsA;
+      commonDim = 0;
+    }
+
+    this.canvas.width = outWidth;
+    this.canvas.height = outHeight;
+    this.gl.viewport(0, 0, outWidth, outHeight);
+
+    const texA = this._createTexture(matrixA, colsA, rowsA);
+    const texB = this._createTexture(matrixB, type === 'multiply' ? matrixB[0].length : colsA, matrixB.length);
+
+    const targetTexture = this.gl.createTexture();
+    this.gl.bindTexture(this.gl.TEXTURE_2D, targetTexture);
+    this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, outWidth, outHeight, 0, this.gl.RGBA, this.gl.FLOAT, null);
+    
+    const fbo = this.gl.createFramebuffer();
+    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo);
+    this.gl.framebufferTexture2D(this.gl.FRAMEBUFFER, this.gl.COLOR_ATTACHMENT0, this.gl.TEXTURE_2D, targetTexture, 0);
+
+    const program = this.programs[type];
+    this.gl.useProgram(program);
+
+    const positionLocation = this.gl.getAttribLocation(program, "position");
+    this.gl.enableVertexAttribArray(positionLocation);
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.quadBuffer);
+    this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+
+    this.gl.activeTexture(this.gl.TEXTURE0);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texA);
+    this.gl.uniform1i(this.gl.getUniformLocation(program, "uMatrixA"), 0);
+
+    this.gl.activeTexture(this.gl.TEXTURE1);
+    this.gl.bindTexture(this.gl.TEXTURE_2D, texB);
+    this.gl.uniform1i(this.gl.getUniformLocation(program, "uMatrixB"), 1);
+
+    if (type === 'multiply') {
+       this.gl.uniform1i(this.gl.getUniformLocation(program, "uCommonDim"), commonDim);
+       this.gl.uniform2f(this.gl.getUniformLocation(program, "uResolution"), outWidth, outHeight);
+    }
+
+    this.gl.drawArrays(this.gl.TRIANGLES, 0, 6);
+
+    const rawBuffer = new Float32Array(outWidth * outHeight * 4);
+    this.gl.readPixels(0, 0, outWidth, outHeight, this.gl.RGBA, this.gl.FLOAT, rawBuffer);
+
+    this.gl.deleteTexture(texA);
+    this.gl.deleteTexture(texB);
+    this.gl.deleteTexture(targetTexture);
+    this.gl.deleteFramebuffer(fbo);
+
+    
+    const result = [];
+    for (let i = 0; i < outHeight; i++) {
+      const row = [];
+
+      const bufferRowIndex = (outHeight - 1 - i);
+      
+      for (let j = 0; j < outWidth; j++) {
+        const ptr = (bufferRowIndex * outWidth + j) * 4;
+        row.push(rawBuffer[ptr]); // R channel
+      }
+      result.push(row);
+    }
+
+    return result;
+  }
+}
+
+const gpuCompute = new WebGLCompute();
+
 class TensorMath {
   static Validators = {
     parseMatrix(jsonString) {
@@ -57,12 +279,7 @@ class TensorMath {
 
   static matrixMultiply(matrixA, matrixB) {
     if (!matrixA.length || !matrixB.length || matrixA[0].length !== matrixB.length) return [];
-    const matrixBTransposed = this.transpose(matrixB);
-    return matrixA.map(row => 
-      matrixBTransposed.map(col => 
-        row.reduce((sum, val, k) => sum + val * col[k], 0)
-      )
-    );
+    return gpuCompute.executeOperation('multiply', matrixA, matrixB);
   }
 
   static sumRows(matrix) {
@@ -70,7 +287,7 @@ class TensorMath {
   }
 
   static matrixAdd(matrixA, matrixB) {
-    return this.mapMatrix(matrixA, matrixB, (a, b) => a + b);
+    return gpuCompute.executeOperation('add', matrixA, matrixB);
   }
 
   static Activations = {
@@ -332,11 +549,18 @@ class EtudeMLCore {
 
       if (node.type === 'linear') {
         const params = this.globalState.parameters[node.layerId];
-        outputTensor = currentTensor.map(row => 
-          params.weight.map((weightRow, i) => 
-            row.reduce((sum, val, k) => sum + val * weightRow[k], 0) + (params.bias ? params.bias[i] : 0)
-          )
-        );
+
+        const weightTransposed = TensorMath.transpose(params.weight);
+        const matMulResult = TensorMath.matrixMultiply(currentTensor, weightTransposed);
+
+        
+        if (params.bias) {
+             const biasMatrix = matMulResult.map(() => params.bias); // Replicate bias rows
+             outputTensor = TensorMath.matrixAdd(matMulResult, biasMatrix);
+        } else {
+             outputTensor = matMulResult;
+        }
+
         this.globalState.forwardCache[node.outputs[0]] = { preActivation: currentTensor, postActivation: outputTensor };
 
       } else if (node.type === 'activation') {
@@ -458,12 +682,15 @@ class AutogradEngine {
         const fwdData = this.core.globalState.forwardCache[node.outputs[0]];
         const params = this.core.globalState.parameters[node.layerId];
 
+        // dx = dy * W 
+        // dy: [Batch, OutDim], W: [OutDim, InDim] -> Result [Batch, InDim]
         gradientMap[node.inputs[0]] = TensorMath.matrixMultiply(dy, params.weight);
 
+        // dW = dy^T * x
+        // dy^T: [OutDim, Batch], x: [Batch, InDim] -> Result [OutDim, InDim]
+        // This matches params.weight shape.
         this.core.globalState.gradients[node.layerId] = {
-
           weight: TensorMath.matrixMultiply(TensorMath.transpose(dy), fwdData.preActivation),
-
           bias: params.bias ? TensorMath.sumRows(dy) : null
         };
 
@@ -685,7 +912,7 @@ class EtudeMLExtension {
       color2: '#3d85c6',
       color3: '#2e5d8f',
       author: 'Asuka | Lin Xi',
-      version: '0.0.9',
+      version: '0.1.0',
       blocks: [
         {
           blockType: Scratch.BlockType.LABEL,
@@ -861,7 +1088,7 @@ class EtudeMLExtension {
 
         {
           blockType: Scratch.BlockType.LABEL,
-          text: '线性代数'
+          text: '线性代数 (WebGL)'
         },
         {
           opcode: 'matrixMultiplication',
